@@ -1,0 +1,124 @@
+:root {
+  --bg: #fafafa;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --accent: #0066cc;
+  --allow: #1a7f37;
+  --deny: #cf222e;
+  --error: #9a3412;
+  --pending: #b07d00;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.5;
+}
+
+header {
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+  padding: 0.75rem 1.5rem;
+}
+
+header nav a {
+  margin-right: 1rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+main {
+  max-width: 800px;
+  margin: 1.5rem auto;
+  padding: 0 1.5rem;
+}
+
+h1 { margin-top: 0; }
+
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.chat-form textarea {
+  width: 100%;
+  padding: 0.5rem;
+  font-family: inherit;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.chat-form button {
+  align-self: flex-end;
+  padding: 0.5rem 1.5rem;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.messages { margin-bottom: 1.5rem; }
+
+.message {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  background: #fff;
+}
+
+.message-user { border-left: 4px solid var(--accent); }
+.message-assistant { border-left: 4px solid var(--muted); }
+
+.message .role {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.trace-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
+  background: #fff;
+  border: 1px solid #eee;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.badge-allow { background: var(--allow); }
+.badge-deny { background: var(--deny); }
+.badge-error { background: var(--error); }
+.badge-pending_approval { background: var(--pending); }
+
+.trace-entry code.tool {
+  font-family: ui-monospace, Menlo, monospace;
+  background: #f0f0f0;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+
+.trace-entry .reason {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
