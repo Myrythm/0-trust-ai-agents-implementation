@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install "ruff>=0.3"
+      - run: ruff check .
+      - run: ruff format --check .
+
+  typecheck:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: mypy zta tests
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest --cov=zta --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
