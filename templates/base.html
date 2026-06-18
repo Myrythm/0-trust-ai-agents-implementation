@@ -2,16 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>{% block title %}ZTA Control Plane{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
-    <nav>
-      <a href="/">Chat</a>
-      <a href="/audit">Audit</a>
-      <a href="/policy">Policy</a>
-    </nav>
+    <div class="nav-wrap">
+      <a href="/" class="logo">
+        <span class="dot{% block dot_class %}{% endblock %}"></span>
+        ZTA//
+      </a>
+      <nav>
+        <a href="/" class="{% block nav_chat %}{% endblock %}">Chat</a>
+        <a href="/audit" class="{% block nav_audit %}{% endblock %}">Audit</a>
+        <a href="/policy" class="{% block nav_policy %}{% endblock %}">Policy</a>
+      </nav>
+    </div>
   </header>
   <main>
     {% block content %}{% endblock %}
