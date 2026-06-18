@@ -464,12 +464,13 @@ def test_e2e_demo_seed_creates_tables(tmp_path) -> None:
     import os
     import sqlite3
     import subprocess
+    import sys
 
     db_path = tmp_path / "demo.db"
     env = os.environ.copy()
     env["ZTA_DB_PATH"] = str(db_path)
     result = subprocess.run(
-        [".venv/bin/python", "examples/seed_db.py"],
+        [sys.executable, "examples/seed_db.py"],
         capture_output=True,
         text=True,
         env=env,
