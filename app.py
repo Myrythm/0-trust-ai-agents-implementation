@@ -14,7 +14,6 @@ template is `.env.example`.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sqlite3
@@ -25,18 +24,18 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from starlette.responses import Response
+from zta.agent_graph import build_zta_graph
 from zta.audit import Audit
 from zta.runtime import session
 
 load_dotenv()
 
 _log = logging.getLogger(__name__)
-
-MAX_TOOL_ITERATIONS = 10
 
 
 class AppConfig(BaseModel):
@@ -98,12 +97,40 @@ def _get_chat_model() -> ChatOpenAI:
     return ChatOpenAI(model=model, api_key=api_key)
 
 
-def _run_chat_loop(
+def _dict_to_message(message: dict[str, object]) -> BaseMessage:
+    """Convert an OpenAI-style message dict to a LangChain BaseMessage."""
+    role = message.get("role")
+    content = str(message.get("content", ""))
+    if role == "user":
+        return HumanMessage(content=content)
+    if role == "assistant":
+        return AIMessage(content=content)
+    if role == "tool":
+        return ToolMessage(content=content, tool_call_id=str(message.get("tool_call_id", "")))
+    return HumanMessage(content=content)
+
+
+def _message_to_dict(message: BaseMessage) -> dict[str, object]:
+    """Convert a LangChain BaseMessage back to an OpenAI-style dict."""
+    if isinstance(message, HumanMessage):
+        return {"role": "user", "content": message.content}
+    if isinstance(message, AIMessage):
+        return {"role": "assistant", "content": message.content}
+    if isinstance(message, ToolMessage):
+        return {
+            "role": "tool",
+            "content": message.content,
+            "tool_call_id": message.tool_call_id,
+        }
+    return {"role": "assistant", "content": str(message.content)}
+
+
+async def _run_chat(
     messages: list[dict[str, object]],
     cfg: AppConfig,
 ) -> tuple[list[dict[str, object]], str, list[dict[str, object]]]:
-    """Run the LangChain ChatOpenAI tool-calling loop. Returns (final_messages, reply, trace_dicts)."""
-    chat = _get_chat_model().bind_tools(_TOOLS)
+    """Run the LangGraph agent and return (final_messages, reply, trace_dicts)."""
+    model = _get_chat_model()
     with session(
         agent=cfg.agent_id,
         policy=cfg.policy_path,
@@ -112,35 +139,14 @@ def _run_chat_loop(
     ) as agent:
         for t in _TOOLS:
             agent.registry.register(t)
-        for _ in range(MAX_TOOL_ITERATIONS):
-            ai = chat.invoke(messages)
-            if not ai.tool_calls:
-                messages.append({"role": "assistant", "content": ai.content or ""})
-                return messages, ai.content or "", [t.__dict__ for t in agent.trace]
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": ai.content,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["args"]),
-                            },
-                        }
-                        for tc in ai.tool_calls
-                    ],
-                }
-            )
-            for tc in ai.tool_calls:
-                result = agent.tool(tc["name"], **tc["args"])
-                tool_content = str(result.value) if result.ok else (result.error or "")
-                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_content})
-    raise HTTPException(
-        status_code=500, detail=f"too many tool iterations (>{MAX_TOOL_ITERATIONS})"
-    )
+        graph = build_zta_graph(model, agent, _TOOLS)
+        initial_state = {"messages": [_dict_to_message(m) for m in messages]}
+        final_state = await graph.ainvoke(initial_state)
+        final_messages = final_state.get("messages", [])
+        reply = final_messages[-1].content if final_messages else ""
+        messages_out = [_message_to_dict(m) for m in final_messages]
+        trace = [t.__dict__ for t in agent.trace]
+        return messages_out, str(reply), trace
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -165,7 +171,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             messages_in: list[dict[str, object]] = [
                 {"role": m["role"], "content": m["content"]} for m in req_messages
             ]
-            messages_out, reply, trace = _run_chat_loop(messages_in, cfg)
+            messages_out, reply, trace = await _run_chat(messages_in, cfg)
             return JSONResponse({"reply": reply, "trace": trace, "messages": messages_out})
         form = await request.form()
         message = form.get("message", "").strip() if form.get("message") else ""
@@ -173,7 +179,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="message must be non-empty")
         display_messages: list[dict[str, str]] = [{"role": "user", "content": message}]
         messages_in = [{"role": "user", "content": message}]
-        messages_out, reply, trace = _run_chat_loop(messages_in, cfg)
+        messages_out, reply, trace = await _run_chat(messages_in, cfg)
         display_messages.append({"role": "assistant", "content": str(reply)})
         return templates.TemplateResponse(
             request,
