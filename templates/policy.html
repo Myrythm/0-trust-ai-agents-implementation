@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}ZTA Policy{% endblock %}
+{% block nav_policy %}active{% endblock %}
 {% block content %}
 <h1>Policy</h1>
 
@@ -20,7 +21,8 @@
     <ol class="policy-rules">
       {% for r in rules %}
         <li>
-          <div>
+          <div class="rule-head">
+            <span class="num">{{ loop.index }}</span>
             <code class="tool">{{ r.tool }}</code>
             <span class="badge badge-{{ r.decision }}">{{ r.decision }}</span>
             {% if r.when %}<code class="when">when: {{ r.when }}</code>{% endif %}
@@ -36,6 +38,6 @@
 
 <section>
   <h2>Raw YAML</h2>
-  <pre class="raw-yaml">{{ content }}</pre>
+  <pre class="raw-yaml"><code>{{ content }}</code></pre>
 </section>
 {% endblock %}
