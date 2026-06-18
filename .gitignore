@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key
+*.crt
+
+# Runtime
+*.log
+logs/
+data/
+.cache/
+
+# ZTA runtime artifacts (kept locally, not in repo)
+audit.jsonl
+data.db
+data.db-journal
+~/.zta/
+
+# OS
+Thumbs.db
