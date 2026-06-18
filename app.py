@@ -206,30 +206,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/chat")
     async def chat(request: Request) -> Response:
-        content_type = request.headers.get("content-type", "")
-        if "application/json" in content_type:
-            data = await request.json()
-            req_messages = data.get("messages", [])
-            if not req_messages:
-                raise HTTPException(status_code=400, detail="messages must be non-empty")
-            messages_in: list[dict[str, object]] = [
-                {"role": m["role"], "content": m["content"]} for m in req_messages
-            ]
-            messages_out, reply, trace = await _run_chat(messages_in, cfg)
-            return JSONResponse({"reply": reply, "trace": trace, "messages": messages_out})
-        form = await request.form()
-        message = form.get("message", "").strip() if form.get("message") else ""
-        if not message:
-            raise HTTPException(status_code=400, detail="message must be non-empty")
-        display_messages: list[dict[str, str]] = [{"role": "user", "content": message}]
-        messages_in = [{"role": "user", "content": message}]
+        data = await request.json()
+        req_messages = data.get("messages", [])
+        if not req_messages:
+            raise HTTPException(status_code=400, detail="messages must be non-empty")
+        messages_in: list[dict[str, object]] = [
+            {"role": m["role"], "content": m["content"]} for m in req_messages
+        ]
         messages_out, reply, trace = await _run_chat(messages_in, cfg)
-        display_messages.append({"role": "assistant", "content": str(reply)})
-        return templates.TemplateResponse(
-            request,
-            "chat.html",
-            {"messages": display_messages, "trace": trace},
-        )
+        return JSONResponse({"reply": reply, "trace": trace, "messages": messages_out})
 
     @app.post("/chat/stream")
     async def chat_stream(request: Request) -> StreamingResponse:
