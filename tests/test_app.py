@@ -174,12 +174,14 @@ def test_api_audit_returns_events_and_chain_validity(tmp_path: Path, monkeypatch
 
 
 def test_audit_endpoint_returns_chain_status(tmp_path: Path) -> None:
+    """F10 changed /audit to HTML; chain status is now in the page itself."""
     cfg = make_config(tmp_path)
     client = TestClient(create_app(cfg))
     resp = client.get("/audit")
     assert resp.status_code == 200
-    body = resp.json()
-    assert "chain_valid" in body
+    body = resp.text
+    assert "chain_valid" not in body  # JSON key
+    assert "Chain valid" in body  # HTML banner copy
 
 
 def test_policy_endpoint_returns_raw_yaml(tmp_path: Path) -> None:
@@ -325,3 +327,65 @@ def test_chat_html_includes_base_layout(tmp_path: Path, monkeypatch) -> None:
     assert "<nav>" in resp.text
     assert 'href="/audit"' in resp.text
     assert 'href="/policy"' in resp.text
+
+
+# ---------- F10: Audit UI ----------
+
+
+def test_audit_page_renders_html(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    resp = client.get("/audit")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Audit log" in resp.text
+
+
+def test_audit_page_shows_empty_state(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    resp = client.get("/audit")
+    assert resp.status_code == 200
+    assert "No events yet" in resp.text
+
+
+def test_audit_page_lists_events(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    with respx.mock(base_url="https://api.openai.com") as mock:
+        mock.post("/v1/chat/completions").mock(
+            side_effect=[
+                Response(200, json=_openai_completion(tool_calls=[("echo", {"message": "hi"})])),
+                Response(200, json=_openai_completion(content="ok")),
+            ]
+        )
+        client.post("/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    resp = client.get("/audit")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "audit-table" in body
+    assert "bot" in body
+    assert "tool:echo" in body
+    assert "allow" in body
+
+
+def test_api_audit_still_returns_json_after_f10(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    with respx.mock(base_url="https://api.openai.com") as mock:
+        mock.post("/v1/chat/completions").mock(
+            side_effect=[
+                Response(200, json=_openai_completion(tool_calls=[("echo", {"message": "hi"})])),
+                Response(200, json=_openai_completion(content="ok")),
+            ]
+        )
+        client.post("/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    resp = client.get("/api/audit")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "events" in body
+    assert body["chain_valid"] is True

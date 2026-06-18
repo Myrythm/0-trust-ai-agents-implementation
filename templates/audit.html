@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}ZTA Audit{% endblock %}
+{% block content %}
+<h1>Audit log</h1>
+
+{% if chain_valid %}
+  <div class="banner banner-ok">Chain valid · {{ event_count }} event(s)</div>
+{% else %}
+  <div class="banner banner-error">CHAIN TAMPERED — investigate immediately</div>
+{% endif %}
+
+{% if events %}
+<table class="audit-table">
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Agent</th>
+      <th>Action</th>
+      <th>Decision</th>
+      <th>Reason</th>
+      <th>Request ID</th>
+      <th>Hash</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for e in events %}
+      <tr>
+        <td class="ts">{{ e.ts }}</td>
+        <td>{{ e.agent_id }}</td>
+        <td><code>{{ e.action }}</code></td>
+        <td><span class="badge badge-{{ e.decision }}">{{ e.decision }}</span></td>
+        <td class="reason">{{ e.reason }}</td>
+        <td class="rid"><code>{{ e.request_id[:12] }}…</code></td>
+        <td class="hash"><code>{{ e.this_hash[:12] }}…</code></td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No events yet. Use the <a href="/">chat</a> to generate one.</p>
+{% endif %}
+{% endblock %}

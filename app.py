@@ -169,9 +169,21 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "chain_valid": audit.verify_chain(),
         }
 
-    @app.get("/audit")
-    async def audit_view() -> dict[str, object]:
-        return await api_audit()
+    @app.get("/audit", response_class=HTMLResponse)
+    async def audit_view(request: Request) -> Response:
+        audit = Audit(cfg.audit_path)
+        events = audit.read_all()
+        events_sorted = list(reversed(events))
+        return templates.TemplateResponse(
+            request,
+            "audit.html",
+            {
+                "chain_valid": audit.verify_chain(),
+                "chain_status": "valid" if audit.verify_chain() else "tampered",
+                "events": [e.model_dump(mode="json") for e in events_sorted],
+                "event_count": len(events),
+            },
+        )
 
     @app.get("/policy")
     async def policy_view() -> dict[str, str]:
