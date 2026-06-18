@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 from zta.audit import Audit
@@ -106,22 +106,22 @@ _TOOL_SCHEMAS: list[dict[str, object]] = [
 ]
 
 
-def _get_openai_client() -> OpenAI:
+def _get_chat_model() -> ChatOpenAI:
     api_key = os.environ.get("ZTA_OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=500, detail="ZTA_OPENAI_API_KEY environment variable is not set"
         )
-    return OpenAI(api_key=api_key)
+    model = os.environ.get("ZTA_OPENAI_MODEL", "gpt-4o-mini")
+    return ChatOpenAI(model=model, api_key=api_key)
 
 
 def _run_chat_loop(
     messages: list[dict[str, object]],
     cfg: AppConfig,
 ) -> tuple[list[dict[str, object]], str, list[dict[str, object]]]:
-    """Run the OpenAI tool-calling loop. Returns (final_messages, reply, trace_dicts)."""
-    client = _get_openai_client()
-    model = os.environ.get("ZTA_OPENAI_MODEL", "gpt-4o-mini")
+    """Run the LangChain ChatOpenAI tool-calling loop. Returns (final_messages, reply, trace_dicts)."""
+    chat = _get_chat_model().bind_tools(_TOOL_SCHEMAS)
     with session(
         agent=cfg.agent_id,
         policy=cfg.policy_path,
@@ -132,35 +132,33 @@ def _run_chat_loop(
         agent.registry.register(_db_query, name="db_query")
         agent.registry.register(_db_write, name="db_write")
         for _ in range(MAX_TOOL_ITERATIONS):
-            completion = client.chat.completions.create(
-                model=model, messages=messages, tools=_TOOL_SCHEMAS
-            )
-            msg = completion.choices[0].message
-            if not msg.tool_calls:
-                messages.append({"role": "assistant", "content": msg.content or ""})
-                return messages, msg.content or "", [t.__dict__ for t in agent.trace]
+            ai = chat.invoke(messages)
+            if not ai.tool_calls:
+                messages.append({"role": "assistant", "content": ai.content or ""})
+                return messages, ai.content or "", [t.__dict__ for t in agent.trace]
             messages.append(
                 {
                     "role": "assistant",
-                    "content": msg.content,
+                    "content": ai.content,
                     "tool_calls": [
                         {
-                            "id": tc.id,
+                            "id": tc["id"],
                             "type": "function",
                             "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["args"]),
                             },
                         }
-                        for tc in msg.tool_calls
+                        for tc in ai.tool_calls
                     ],
                 }
             )
-            for tc in msg.tool_calls:
-                fn_args = json.loads(tc.function.arguments)
-                result = agent.tool(tc.function.name, **fn_args)
+            for tc in ai.tool_calls:
+                result = agent.tool(tc["name"], **tc["args"])
                 tool_content = str(result.value) if result.ok else (result.error or "")
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_content})
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc["id"], "content": tool_content}
+                )
     raise HTTPException(
         status_code=500, detail=f"too many tool iterations (>{MAX_TOOL_ITERATIONS})"
     )
