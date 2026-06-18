@@ -1,6 +1,6 @@
 # Zero Trust for AI Agents — MVP
 
-An implementation of Zero Trust Architecture (ZTA) for AI agents that gates every agent action through declarative policies and records the outcome in an append-only audit trail. A FastAPI service with a Jinja2-based chat interface serves as the demonstration runtime. The analyst agent uses LangChain tool calling with ChatOpenAI, while the Zero Trust layer intercepts and evaluates each tool invocation before execution. A SQLite database acts as the tool surface, enabling policy enforcement, identity attribution, and auditable agent interactions.
+An implementation of Zero Trust Architecture (ZTA) for AI agents that gates every agent action through declarative policies and records the outcome in an append-only audit trail. A FastAPI service with a Jinja2-based chat interface serves as the demonstration runtime. The analyst agent runs as a LangGraph StateGraph that calls ChatOpenAI with native LangChain tools, while the Zero Trust layer intercepts and evaluates each tool invocation inside a dedicated graph node before execution. A SQLite database acts as the tool surface, enabling policy enforcement, identity attribution, and auditable agent interactions.
 
 The project demonstrates how Zero Trust principles can be applied to LLM agents by enforcing least-privilege access, explicit authorization, and full auditability of tool usage.
 
@@ -33,10 +33,10 @@ http://localhost:8000
 ## Try the Demo
 
 1. **Chat:** "show all customers"
-   ChatOpenAI calls `db_query("SELECT * FROM customers")`; the policy engine allows the action; the agent returns a summarized response.
+   The assistant response streams in token by token. ChatOpenAI calls `db_query("SELECT * FROM customers")`; the policy engine allows the action and the trace entry appears live; the agent returns a summarized response.
 
 2. **Chat:** "delete all customers"
-   ChatOpenAI calls `db_write("DELETE FROM customers")`; the policy engine denies the action; the agent explains that the operation is not permitted.
+   ChatOpenAI calls `db_write("DELETE FROM customers")`; the policy engine denies the action and the deny trace entry appears live; the agent explains that the operation is not permitted.
 
 3. **Visit `/audit`**
    Review allow/deny decisions recorded in the append-only audit log. The page polls `/api/audit` every three seconds.
@@ -47,13 +47,14 @@ http://localhost:8000
 ## Architecture (TL;DR)
 
 ```text
-Browser (Jinja2)
+Browser (Jinja2 + SSE)
   -> FastAPI (app.py)
-    -> LangChain ChatOpenAI (tool calling)
-      -> zta.runtime.session
-        -> Policy.decide (F3) -> Audit.append (F4)
-        -> Tool call (db_query, db_write, echo) via ToolRegistry (F5)
-        -> Identity (F2) attaches agent identity
+    -> LangGraph StateGraph (zta.agent_graph)
+      -> call_model node (ChatOpenAI with native tools)
+      -> zta_tools node
+        -> agent.tool(...) -> Policy.decide -> Audit.append
+        -> Tool execution via ToolRegistry
+    -> Identity attaches agent identity
 ```
 
 ## Core Zero Trust Flow
@@ -88,7 +89,7 @@ Every tool invocation is evaluated before execution and recorded after the decis
 
 ```bash
 ruff check . && ruff format --check .
-mypy zta tests
+mypy zta tests app.py
 pytest --cov=zta
 ```
 
