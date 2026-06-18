@@ -14,14 +14,16 @@ template is `.env.example`.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -125,6 +127,48 @@ def _message_to_dict(message: BaseMessage) -> dict[str, object]:
     return {"role": "assistant", "content": str(message.content)}
 
 
+def _sse_event(event_type: str, data: dict[str, object]) -> str:
+    """Format a single Server-Sent Event payload."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _stream_chat(
+    messages: list[dict[str, object]],
+    cfg: AppConfig,
+) -> AsyncIterator[str]:
+    """Stream LangGraph events as SSE lines (token, trace, error, end)."""
+    try:
+        model = _get_chat_model()
+    except HTTPException as exc:
+        yield _sse_event("error", {"message": exc.detail})
+        return
+
+    with session(
+        agent=cfg.agent_id,
+        policy=cfg.policy_path,
+        audit=cfg.audit_path,
+        key_dir=cfg.key_dir,
+    ) as agent:
+        for t in _TOOLS:
+            agent.registry.register(t)
+        graph = build_zta_graph(model, agent, _TOOLS)
+        initial_state = {"messages": [_dict_to_message(m) for m in messages]}
+        try:
+            async for event in graph.astream_events(initial_state, version="v2"):
+                event_type = event.get("event")
+                if event_type == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    content = getattr(chunk, "content", None)
+                    if content:
+                        yield _sse_event("token", {"content": str(content)})
+                elif event_type == "on_custom_event" and event.get("name") == "zta_trace":
+                    yield _sse_event("trace", event.get("data", {}))
+            yield _sse_event("end", {"done": True})
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.exception("streaming chat failed")
+            yield _sse_event("error", {"message": str(exc)})
+
+
 async def _run_chat(
     messages: list[dict[str, object]],
     cfg: AppConfig,
@@ -185,6 +229,21 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             request,
             "chat.html",
             {"messages": display_messages, "trace": trace},
+        )
+
+    @app.post("/chat/stream")
+    async def chat_stream(request: Request) -> StreamingResponse:
+        """Stream the chat response as Server-Sent Events."""
+        data = await request.json()
+        req_messages = data.get("messages", [])
+        if not req_messages:
+            raise HTTPException(status_code=400, detail="messages must be non-empty")
+        messages_in: list[dict[str, object]] = [
+            {"role": m["role"], "content": m["content"]} for m in req_messages
+        ]
+        return StreamingResponse(
+            _stream_chat(messages_in, cfg),
+            media_type="text/event-stream",
         )
 
     @app.get("/api/audit")

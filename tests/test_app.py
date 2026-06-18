@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
+import pytest
 import respx
 from app import AppConfig, create_app
 from fastapi.testclient import TestClient
 from httpx import Response
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from zta.audit import Audit
 
 
@@ -68,6 +73,63 @@ def _openai_completion(
         ],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
     }
+
+
+class FakeStreamingChatModel(BaseChatModel):
+    """Deterministic streaming chat model for SSE tests."""
+
+    responses: list[AIMessage]
+    idx: int = 0
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake-streaming-chat-model"
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        response = self.responses[self.idx % len(self.responses)]
+        self.idx += 1
+        return ChatResult(generations=[ChatGeneration(message=response)])
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._generate(messages, stop, run_manager, **kwargs)
+
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        response = self.responses[self.idx % len(self.responses)]
+        self.idx += 1
+        content = response.content or ""
+        for char in content:
+            yield ChatGenerationChunk(message=AIMessageChunk(content=char))
+        if response.tool_calls:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(content="", tool_calls=response.tool_calls)
+            )
+
+    def bind_tools(
+        self,
+        tools: Any,
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> BaseChatModel:
+        return self
 
 
 def test_create_app_returns_fastapi_instance() -> None:
@@ -566,3 +628,75 @@ def test_e2e_chat_db_write_denied(tmp_path, monkeypatch) -> None:
     body = resp.json()
     assert body["reply"] == "I cannot write to the database"
     assert any(t["tool"] == "db_write" and t["decision"] == "deny" for t in body["trace"])
+
+
+# ---------- Streaming endpoint ----------
+
+
+def _parse_sse(resp_text: str) -> list[tuple[str, dict[str, object]]]:
+    """Parse raw SSE response text into (event, data) pairs."""
+    events: list[tuple[str, dict[str, object]]] = []
+    current_event: str | None = None
+    for line in resp_text.splitlines():
+        if line.startswith("event: "):
+            current_event = line[len("event: ") :]
+        elif line.startswith("data: ") and current_event is not None:
+            payload = json.loads(line[len("data: ") :])
+            events.append((current_event, payload))
+            current_event = None
+    return events
+
+
+def test_chat_stream_returns_sse(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    fake_model = FakeStreamingChatModel(responses=[AIMessage(content="hello")])
+    monkeypatch.setattr("app._get_chat_model", lambda: fake_model)
+    resp = client.post("/chat/stream", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    events = _parse_sse(resp.text)
+    assert any(e == "end" for e, _ in events)
+
+
+def test_chat_stream_emits_tokens_and_trace(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    fake_model = FakeStreamingChatModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "echo", "args": {"message": "hi"}, "id": "call_1"}],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    monkeypatch.setattr("app._get_chat_model", lambda: fake_model)
+    resp = client.post("/chat/stream", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    event_types = [e for e, _ in events]
+    assert "token" in event_types
+    assert "trace" in event_types
+    trace_events = [data for e, data in events if e == "trace"]
+    assert any(data["tool"] == "echo" and data["decision"] == "allow" for data in trace_events)
+
+
+def test_chat_stream_empty_messages_returns_400(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    resp = client.post("/chat/stream", json={"messages": []})
+    assert resp.status_code in (400, 422)
+
+
+@pytest.mark.anyio
+async def test_chat_stream_missing_api_key_returns_error_event(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ZTA_OPENAI_API_KEY", raising=False)
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    resp = client.post("/chat/stream", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    assert "error" in resp.text
