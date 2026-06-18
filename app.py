@@ -8,15 +8,20 @@ placeholder `echo` tool with real OpenAI function calling.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from openai import OpenAI
 from pydantic import BaseModel, Field
 from zta.audit import Audit
 from zta.runtime import session
 
 _log = logging.getLogger(__name__)
+
+MAX_TOOL_ITERATIONS = 10
 
 
 class AppConfig(BaseModel):
@@ -38,8 +43,33 @@ class ChatResponse(BaseModel):
 
 
 def _echo(message: str) -> str:
-    """Placeholder tool used by /chat in F7. F8 will replace with OpenAI."""
+    """Placeholder tool used by /chat. F12 will add db_query and db_write."""
     return f"echo: {message}"
+
+
+_ECHO_TOOL_SCHEMA: list[dict[str, object]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "echo",
+            "description": "Echo the message back to the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {"message": {"type": "string"}},
+                "required": ["message"],
+            },
+        },
+    }
+]
+
+
+def _get_openai_client() -> OpenAI:
+    api_key = os.environ.get("ZTA_OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=500, detail="ZTA_OPENAI_API_KEY environment variable is not set"
+        )
+    return OpenAI(api_key=api_key)
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -56,12 +86,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def chat(req: ChatRequest) -> ChatResponse:
         if not req.messages:
             raise HTTPException(status_code=400, detail="messages must be non-empty")
-        last_user = next(
-            (m["content"] for m in reversed(req.messages) if m.get("role") == "user"),
-            None,
-        )
-        if last_user is None:
-            raise HTTPException(status_code=400, detail="no user message found")
+        client = _get_openai_client()
+        model = os.environ.get("ZTA_OPENAI_MODEL", "gpt-4o-mini")
+        messages: list[dict[str, object]] = [
+            {"role": m["role"], "content": m["content"]} for m in req.messages
+        ]
         with session(
             agent=cfg.agent_id,
             policy=cfg.policy_path,
@@ -69,10 +98,42 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             key_dir=cfg.key_dir,
         ) as agent:
             agent.registry.register(_echo, name="echo")
-            result = agent.tool("echo", message=last_user)
-        return ChatResponse(
-            reply=result.value if result.ok else (result.error or ""),
-            trace=[t.__dict__ for t in agent.trace],
+            for _ in range(MAX_TOOL_ITERATIONS):
+                completion = client.chat.completions.create(
+                    model=model, messages=messages, tools=_ECHO_TOOL_SCHEMA
+                )
+                msg = completion.choices[0].message
+                if not msg.tool_calls:
+                    return ChatResponse(
+                        reply=msg.content or "",
+                        trace=[t.__dict__ for t in agent.trace],
+                    )
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": msg.content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in msg.tool_calls
+                        ],
+                    }
+                )
+                for tc in msg.tool_calls:
+                    fn_args = json.loads(tc.function.arguments)
+                    result = agent.tool(tc.function.name, **fn_args)
+                    tool_content = str(result.value) if result.ok else (result.error or "")
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
+                    )
+        raise HTTPException(
+            status_code=500, detail=f"too many tool iterations (>{MAX_TOOL_ITERATIONS})"
         )
 
     @app.get("/api/audit")

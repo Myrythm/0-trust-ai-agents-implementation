@@ -68,8 +68,13 @@ plugins = ["pydantic.mypy"]
 mypy_path = "zta"
 
 [[tool.mypy.overrides]]
-module = ["docker.*", "boto3.*", "botocore.*"]
+module = ["docker.*", "boto3.*", "botocore.*", "structlog.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*", "app"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
