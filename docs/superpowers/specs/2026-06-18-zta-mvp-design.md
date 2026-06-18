@@ -33,18 +33,20 @@ Non-goals (deferred to post-MVP):
 │  │              │  │   allow/deny)│  │   w/ hash)   │    │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │
 └─────────┼──────────────────┼──────────────────┼──────────┘
-          │ HTML form       │ inline render    │ JS poll
+          │ SSE             │ inline render    │ JS poll
           ▼                  ▼                  ▼
 ┌──────────────────────────────────────────────────────────┐
 │  FastAPI service (app.py) + Jinja2 templates             │
 │                                                          │
 │  GET  /              → render chat.html                  │
-│  POST /chat          → OpenAI + zta.session → trace      │
+│  POST /chat          → JSON {reply, trace, messages}     │
+│  POST /chat/stream   → SSE {token|trace|end|error}       │
 │  GET  /audit         → render audit.html                 │
 │  GET  /api/audit     → JSON (for live polling)           │
 │  GET  /policy        → render policy.html (read-only)    │
 │                                                          │
-│  zta.session() wraps every OpenAI function call         │
+│  LangGraph StateGraph (zta.agent_graph)                  │
+│    call_model → zta_tools → call_model → ...             │
 └─────────────────┬────────────────────────────────────────┘
                   │ in-process
         ┌─────────┴────────────────────────┐
@@ -54,6 +56,7 @@ Non-goals (deferred to post-MVP):
         │   audit     — JSONL hash chain   │
         │   tools     — @tool decorator    │
         │   runtime   — session() + Agent  │
+        │   agent_graph — LangGraph graph  │
         └──────────────────────────────────┘
                   │
        audit.jsonl  policy.yaml  ~/.zta/keys/  data.db
@@ -191,47 +194,81 @@ def session(*, agent: str, policy: Path, audit: Path, key_dir: Path) -> Iterator
 5. If `pending_approval`: (not implemented in MVP; behaves like deny with reason)
 6. Append to `agent.trace` for UI display
 
-### 3.6 `app.py` — FastAPI + OpenAI + Jinja2
+### 3.6 `zta.agent_graph` — LangGraph Workflow
+
+**Responsibility:** Build the agent workflow as a compiled LangGraph `StateGraph`. The graph replaces the manual ReAct loop and makes the model/tool/model orchestration explicit.
+
+**Public API:**
+```python
+class AgentState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+    trace: Annotated[list[TraceEntry], operator.add]
+
+def build_zta_graph(model: BaseChatModel, agent: Agent, tools: Sequence[BaseTool]) -> CompiledGraph: ...
+```
+
+**Graph nodes:**
+- `call_model` — binds native LangChain tools to the chat model and invokes it.
+- `zta_tools` — for each `AIMessage.tool_call`, calls `agent.tool(name, **args)` so policy enforcement and audit happen before execution.
+
+**Edges:**
+- `START → call_model`
+- `call_model → zta_tools` if the model emitted `tool_calls`, otherwise `END`
+- `zta_tools → call_model`
+
+The graph emits `zta_trace` custom events during streaming so the UI can render allow/deny decisions in real time.
+
+### 3.7 `app.py` — FastAPI + LangGraph + Jinja2
 
 **Responsibility:** Wires it all together. One file.
 
 **Endpoints:**
-| Method | Path         | Purpose                                       |
-|--------|--------------|-----------------------------------------------|
-| GET    | `/`          | Chat page (Jinja2)                            |
-| POST   | `/chat`      | Run one user message through OpenAI + zta     |
-| GET    | `/audit`     | Audit page (renders all events)               |
-| GET    | `/api/audit` | JSON of all events (for JS polling)           |
-| GET    | `/policy`    | Policy page (renders policy.yaml)             |
+| Method | Path            | Purpose                                              |
+|--------|-----------------|------------------------------------------------------|
+| GET    | `/`             | Chat page (Jinja2)                                   |
+| POST   | `/chat`         | Run one user message through the graph; return JSON  |
+| POST   | `/chat/stream`  | Stream the graph run as SSE (token + trace events)   |
+| GET    | `/audit`        | Audit page (renders all events)                      |
+| GET    | `/api/audit`    | JSON of all events (for JS polling)                  |
+| GET    | `/policy`       | Policy page (renders policy.yaml)                    |
 
-**Chat flow:**
+**Chat flow (non-streaming `/chat`):**
 1. Receive `{"messages": [{"role": "user", "content": "..."}]}`
-2. OpenAI Chat Completions call with function-calling schema for `db_query`, `db_write`
-3. If OpenAI returns a function call:
-   a. `with zta.session(...) as agent: agent.tool(name, **args)`
-   b. Append result to messages
-   c. Call OpenAI again so it can produce a final answer (or another tool call)
-4. Loop until OpenAI returns no function call
-5. Render `chat.html` with: final assistant message + `agent.trace` (inline tool call list)
+2. Convert dict messages to `BaseMessage`s
+3. Build and invoke the LangGraph graph
+4. Return JSON with final assistant message, full message list, and `agent.trace`
+
+**Chat flow (streaming `/chat/stream`):**
+1. Receive `{"messages": [...]}`
+2. Build the LangGraph graph
+3. Run `graph.astream_events(..., version="v2")`
+4. Emit SSE events:
+   - `token` — each model token chunk
+   - `trace` — each allow/deny/error tool decision
+   - `end` — graph finished
+   - `error` — setup or runtime error
 
 **Tools registered (in `app.py`):**
 - `db_query(sql: str)` — SELECT against `data.db` (SQLite, read-only)
 - `db_write(sql: str)` — INSERT/UPDATE/DELETE against `data.db`
+- `echo(message: str)` — echo helper
 
 The actual SQLite operations live in `app.py` (not in `zta.tools`) because they are app-specific. `zta.tools` only provides the decorator + registry.
 
-### 3.7 Templates and Static
+### 3.8 Templates and Static
 
 - `templates/base.html` — shared layout, navigation
-- `templates/chat.html` — message list, input form, inline trace panel
+- `templates/chat.html` — message list, input form, inline trace panel (JS-driven)
 - `templates/audit.html` — table of events with hash chain
 - `templates/policy.html` — pretty-printed policy.yaml
 - `static/style.css` — minimal CSS (no framework)
-- `static/app.js` — polls `/api/audit` every 3s when on audit page
+- `static/app.js` — chat streaming handler + audit polling every 3s
 
 ---
 
 ## 4. Data Flow (one chat turn)
+
+### Non-streaming `/chat`
 
 ```
 User submits message "show top 5 customers"
@@ -240,16 +277,14 @@ User submits message "show top 5 customers"
 POST /chat { messages: [...] }
         │
         ▼
-OpenAI Chat Completions
-   tools: [db_query, db_write]
+LangGraph StateGraph
+   call_model node → OpenAI Chat Completions with tools [db_query, db_write]
         │
         ▼ (OpenAI picks tool_call)
-{ name: "db_query", args: { sql: "SELECT * FROM customers LIMIT 5" } }
+zta_tools node receives AIMessage(tool_calls=[...])
         │
         ▼
-with zta.session(agent="analyst-bot", policy=Path("policy.yaml"),
-                 audit=Path("audit.jsonl"), key_dir=Path("~/.zta/keys")) as agent:
-    result = agent.tool("db_query", sql="SELECT * FROM customers LIMIT 5")
+agent.tool("db_query", sql="SELECT * FROM customers LIMIT 5")
         │
         │ policy.decide(agent_id="analyst-bot", tool="db_query",
         │               args={"sql": "SELECT * FROM customers LIMIT 5"})
@@ -261,17 +296,27 @@ with zta.session(agent="analyst-bot", policy=Path("policy.yaml"),
         │             reason="matches rule: db_query + SELECT prefix")
         │
         ▼
-ToolResult(ok=True, value=[{...}, {...}, ...])
+ToolMessage(content=rows) appended to state
         │
-        ▼ (appended as tool message to OpenAI)
-OpenAI Chat Completions (second call)
+        ▼
+call_model node (second invocation)
         │
         ▼ (no more tool calls → returns content)
 "Here are the top 5 customers: ..."
         │
         ▼
-Render chat.html with messages + agent.trace
+JSONResponse {reply, trace, messages}
 ```
+
+### Streaming `/chat/stream`
+
+The same graph is executed with `graph.astream_events(...)`. The server emits:
+
+- `token` events as the model produces the assistant response
+- `trace` events as each tool call is evaluated by policy
+- `end` when the graph reaches `END`
+
+The JavaScript chat UI renders each event as it arrives, so the user sees tokens and trace entries appear live.
 
 ---
 
@@ -279,13 +324,13 @@ Render chat.html with messages + agent.trace
 
 | Condition                       | Behavior                                            |
 |---------------------------------|-----------------------------------------------------|
-| Missing OpenAI API key          | `app.py` startup fails with clear message           |
+| Missing OpenAI API key          | `/chat` returns 500; `/chat/stream` emits an SSE `error` event |
 | `policy.yaml` not found         | `PolicyError` → `/chat` returns 500 with explanation |
 | `policy.yaml` parse error       | `PolicyError` → `/chat` returns 500                |
 | `~/.zta/keys/{agent}.pem` missing | auto-create on first `session()` call            |
 | Tool raises exception           | `ToolResult(ok=False, error=str(exc))`, audit as `error` decision |
 | `audit.jsonl` tampered          | `verify_chain()` returns False; UI shows a banner   |
-| OpenAI API call fails           | 500 with OpenAI error message                       |
+| OpenAI API call fails           | `/chat` returns 500; `/chat/stream` emits an SSE `error` event |
 | SQLite file missing             | `db_query` returns `ToolResult(ok=False, error="...")` |
 | Rule regex error                | rule skipped, logged, decision falls through        |
 
@@ -301,8 +346,9 @@ Deny-by-default: a missing or empty `policy.yaml` means every tool call is denie
   - `tests/test_audit.py` — append + hash chain, tamper detection, genesis hash
   - `tests/test_tools.py` — decorator + registry
   - `tests/test_runtime.py` — `session()` happy path, deny path, trace population, audit on every call
-- **Contract tests** for `app.py` using `TestClient` (FastAPI) + `respx` for OpenAI mocking.
-  - `tests/test_app.py` — chat flow with mocked OpenAI; allow tool; deny tool; audit endpoint
+  - `tests/test_agent_graph.py` — LangGraph graph allow/deny/multi-tool/trace paths
+- **Contract tests** for `app.py` using `TestClient` (FastAPI) + fake chat models for deterministic graph tests.
+  - `tests/test_app.py` — chat flow; allow/deny tool; audit endpoint; streaming SSE endpoint
 - **Coverage target:** 80% overall. Library modules (`zta/`) 90%.
 - **Property test (optional, MVP):** `hypothesis` test on `audit` that random event streams produce a valid chain.
 
@@ -324,7 +370,8 @@ Deny-by-default: a missing or empty `policy.yaml` means every tool call is denie
 │   ├── policy.py
 │   ├── audit.py
 │   ├── tools.py
-│   └── runtime.py
+│   ├── runtime.py
+│   └── agent_graph.py
 ├── tests/
 │   ├── conftest.py
 │   ├── test_identity.py
@@ -332,6 +379,7 @@ Deny-by-default: a missing or empty `policy.yaml` means every tool call is denie
 │   ├── test_audit.py
 │   ├── test_tools.py
 │   ├── test_runtime.py
+│   ├── test_agent_graph.py
 │   └── test_app.py
 ├── examples/
 │   └── seed_db.py
