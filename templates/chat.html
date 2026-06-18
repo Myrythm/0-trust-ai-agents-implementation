@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}ZTA Chat{% endblock %}
+{% block content %}
+<h1>ZTA Chat</h1>
+<form method="post" action="/chat" class="chat-form">
+  <textarea name="message" rows="3" required placeholder="Ask the analyst bot something..."></textarea>
+  <button type="submit">Send</button>
+</form>
+
+{% if messages %}
+<section class="messages">
+  {% for m in messages %}
+    <div class="message message-{{ m.role }}">
+      <div class="role">{{ m.role }}</div>
+      <div class="content">{{ m.content }}</div>
+    </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if trace %}
+<section class="trace">
+  <h2>Tool trace</h2>
+  {% for t in trace %}
+    <div class="trace-entry trace-{{ t.decision }}">
+      <span class="badge badge-{{ t.decision }}">{{ t.decision }}</span>
+      <code class="tool">{{ t.tool }}</code>
+      <span class="reason">{{ t.reason }}</span>
+    </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

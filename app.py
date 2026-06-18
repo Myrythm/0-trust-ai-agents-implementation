@@ -1,9 +1,10 @@
-"""FastAPI app skeleton for the ZTA demo runtime.
+"""FastAPI app for the ZTA demo runtime.
 
 This file lives at the repo root (not under `zta/`) because it is the
-demo service that USES the ZTA library. F7 ships JSON responses on
-all 5 routes; F9-F11 wrap them in Jinja templates; F8 replaces the
-placeholder `echo` tool with real OpenAI function calling.
+demo service that USES the ZTA library. F7 shipped the JSON skeleton;
+F8 wired OpenAI function calling; F9 adds the Jinja2 chat UI; F10
+and F11 wrap the audit and policy endpoints in templates; F12 adds
+the demo seed and end-to-end smoke.
 """
 
 from __future__ import annotations
@@ -13,9 +14,13 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from openai import OpenAI
 from pydantic import BaseModel, Field
+from starlette.responses import Response
 from zta.audit import Audit
 from zta.runtime import session
 
@@ -25,8 +30,6 @@ MAX_TOOL_ITERATIONS = 10
 
 
 class AppConfig(BaseModel):
-    """Configuration for the FastAPI app. Override per-test via create_app()."""
-
     agent_id: str = "analyst-bot"
     policy_path: Path = Field(default_factory=lambda: Path("./policy.yaml"))
     audit_path: Path = Field(default_factory=lambda: Path("./audit.jsonl"))
@@ -43,7 +46,6 @@ class ChatResponse(BaseModel):
 
 
 def _echo(message: str) -> str:
-    """Placeholder tool used by /chat. F12 will add db_query and db_write."""
     return f"echo: {message}"
 
 
@@ -72,68 +74,91 @@ def _get_openai_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
+def _run_chat_loop(
+    messages: list[dict[str, object]],
+    cfg: AppConfig,
+) -> tuple[list[dict[str, object]], str, list[dict[str, object]]]:
+    """Run the OpenAI tool-calling loop. Returns (final_messages, reply, trace_dicts)."""
+    client = _get_openai_client()
+    model = os.environ.get("ZTA_OPENAI_MODEL", "gpt-4o-mini")
+    with session(
+        agent=cfg.agent_id,
+        policy=cfg.policy_path,
+        audit=cfg.audit_path,
+        key_dir=cfg.key_dir,
+    ) as agent:
+        agent.registry.register(_echo, name="echo")
+        for _ in range(MAX_TOOL_ITERATIONS):
+            completion = client.chat.completions.create(
+                model=model, messages=messages, tools=_ECHO_TOOL_SCHEMA
+            )
+            msg = completion.choices[0].message
+            if not msg.tool_calls:
+                messages.append({"role": "assistant", "content": msg.content or ""})
+                return messages, msg.content or "", [t.__dict__ for t in agent.trace]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ],
+                }
+            )
+            for tc in msg.tool_calls:
+                fn_args = json.loads(tc.function.arguments)
+                result = agent.tool(tc.function.name, **fn_args)
+                tool_content = str(result.value) if result.ok else (result.error or "")
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_content})
+    raise HTTPException(
+        status_code=500, detail=f"too many tool iterations (>{MAX_TOOL_ITERATIONS})"
+    )
+
+
 def create_app(config: AppConfig | None = None) -> FastAPI:
-    """Build the FastAPI app with the 5 demo routes."""
     cfg = config or AppConfig()
     app = FastAPI(title="ZTA Control Plane", version="0.1.0")
     app.state.config = cfg
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+    templates = Jinja2Templates(directory="templates")
 
-    @app.get("/")
-    async def index() -> dict[str, str]:
-        return {"service": "zta-controlplane", "version": "0.1.0"}
+    @app.get("/", response_class=HTMLResponse)
+    async def index(request: Request) -> Response:
+        return templates.TemplateResponse(request, "chat.html", {"messages": [], "trace": []})
 
-    @app.post("/chat", response_model=ChatResponse)
-    async def chat(req: ChatRequest) -> ChatResponse:
-        if not req.messages:
-            raise HTTPException(status_code=400, detail="messages must be non-empty")
-        client = _get_openai_client()
-        model = os.environ.get("ZTA_OPENAI_MODEL", "gpt-4o-mini")
-        messages: list[dict[str, object]] = [
-            {"role": m["role"], "content": m["content"]} for m in req.messages
-        ]
-        with session(
-            agent=cfg.agent_id,
-            policy=cfg.policy_path,
-            audit=cfg.audit_path,
-            key_dir=cfg.key_dir,
-        ) as agent:
-            agent.registry.register(_echo, name="echo")
-            for _ in range(MAX_TOOL_ITERATIONS):
-                completion = client.chat.completions.create(
-                    model=model, messages=messages, tools=_ECHO_TOOL_SCHEMA
-                )
-                msg = completion.choices[0].message
-                if not msg.tool_calls:
-                    return ChatResponse(
-                        reply=msg.content or "",
-                        trace=[t.__dict__ for t in agent.trace],
-                    )
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": msg.content,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                },
-                            }
-                            for tc in msg.tool_calls
-                        ],
-                    }
-                )
-                for tc in msg.tool_calls:
-                    fn_args = json.loads(tc.function.arguments)
-                    result = agent.tool(tc.function.name, **fn_args)
-                    tool_content = str(result.value) if result.ok else (result.error or "")
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
-                    )
-        raise HTTPException(
-            status_code=500, detail=f"too many tool iterations (>{MAX_TOOL_ITERATIONS})"
+    @app.post("/chat")
+    async def chat(request: Request) -> Response:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            data = await request.json()
+            req_messages = data.get("messages", [])
+            if not req_messages:
+                raise HTTPException(status_code=400, detail="messages must be non-empty")
+            messages_in: list[dict[str, object]] = [
+                {"role": m["role"], "content": m["content"]} for m in req_messages
+            ]
+            messages_out, reply, trace = _run_chat_loop(messages_in, cfg)
+            return JSONResponse({"reply": reply, "trace": trace, "messages": messages_out})
+        form = await request.form()
+        message = form.get("message", "").strip() if form.get("message") else ""
+        if not message:
+            raise HTTPException(status_code=400, detail="message must be non-empty")
+        display_messages: list[dict[str, str]] = [{"role": "user", "content": message}]
+        messages_in = [{"role": "user", "content": message}]
+        messages_out, reply, trace = _run_chat_loop(messages_in, cfg)
+        display_messages.append({"role": "assistant", "content": str(reply)})
+        return templates.TemplateResponse(
+            request,
+            "chat.html",
+            {"messages": display_messages, "trace": trace},
         )
 
     @app.get("/api/audit")

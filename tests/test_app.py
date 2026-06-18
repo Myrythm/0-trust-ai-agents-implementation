@@ -78,12 +78,11 @@ def test_create_app_returns_fastapi_instance() -> None:
 
 
 def test_index_returns_service_metadata() -> None:
+    """F9 changed / to return HTML; the service name is in the page title."""
     client = TestClient(create_app())
     resp = client.get("/")
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["service"] == "zta-controlplane"
-    assert "version" in body
+    assert "ZTA Chat" in resp.text
 
 
 def test_chat_runs_echo_tool_through_zta(tmp_path: Path, monkeypatch) -> None:
@@ -250,3 +249,79 @@ def test_chat_openai_tool_deny_propagates(tmp_path: Path, monkeypatch) -> None:
     body = resp.json()
     assert body["reply"] == "I was denied"
     assert any(t["decision"] == "deny" for t in body["trace"])
+
+
+# ---------- F9: Jinja2 chat UI ----------
+
+
+def test_index_renders_chat_html(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    client = TestClient(create_app(make_config(tmp_path)))
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "<form" in resp.text
+    assert "ZTA Chat" in resp.text
+
+
+def test_chat_form_post_returns_html_with_reply(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    with respx.mock(base_url="https://api.openai.com") as mock:
+        mock.post("/v1/chat/completions").mock(
+            return_value=Response(200, json=_openai_completion(content="echo: hi"))
+        )
+        resp = client.post(
+            "/chat",
+            data={"message": "hi"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "hi" in resp.text
+    assert "echo: hi" in resp.text
+
+
+def test_chat_form_post_renders_trace_panel(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    cfg = make_config(tmp_path)
+    client = TestClient(create_app(cfg))
+    with respx.mock(base_url="https://api.openai.com") as mock:
+        mock.post("/v1/chat/completions").mock(
+            side_effect=[
+                Response(200, json=_openai_completion(tool_calls=[("echo", {"message": "hi"})])),
+                Response(200, json=_openai_completion(content="echo: hi")),
+            ]
+        )
+        resp = client.post(
+            "/chat",
+            data={"message": "hi"},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 200
+    assert "trace-entry" in resp.text
+    assert "echo" in resp.text
+    assert "allow" in resp.text
+
+
+def test_chat_form_post_empty_message_returns_400(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    client = TestClient(create_app(make_config(tmp_path)))
+    resp = client.post(
+        "/chat",
+        data={"message": ""},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+
+def test_chat_html_includes_base_layout(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZTA_OPENAI_API_KEY", "sk-test")
+    client = TestClient(create_app(make_config(tmp_path)))
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "<nav>" in resp.text
+    assert 'href="/audit"' in resp.text
+    assert 'href="/policy"' in resp.text
