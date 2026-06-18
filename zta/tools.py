@@ -12,6 +12,8 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar, overload
 
+from langchain_core.tools import BaseTool
+
 from zta.errors import ToolError
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -59,14 +61,19 @@ class ToolRegistry:
     """In-process map of tool name → callable."""
 
     def __init__(self) -> None:
-        self._tools: dict[str, Callable[..., Any]] = {}
+        self._tools: dict[str, Callable[..., Any] | BaseTool] = {}
 
-    def register(self, fn: Callable[..., Any], *, name: str | None = None) -> None:
+    def register(self, fn: Callable[..., Any] | BaseTool, *, name: str | None = None) -> None:
         """Register `fn` under the chosen name (or its tool/function name)."""
-        chosen = name if name is not None else getattr(fn, _TOOL_NAME_ATTR, None) or fn.__name__
+        if name is not None:
+            chosen = name
+        elif isinstance(fn, BaseTool):
+            chosen = fn.name
+        else:
+            chosen = getattr(fn, _TOOL_NAME_ATTR, None) or fn.__name__
         self._tools[chosen] = fn
 
-    def get(self, name: str) -> Callable[..., Any]:
+    def get(self, name: str) -> Callable[..., Any] | BaseTool:
         """Return the tool registered as `name`; raise ToolError if missing."""
         try:
             return self._tools[name]

@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from langchain_core.tools import BaseTool, tool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from starlette.responses import Response
@@ -54,12 +55,20 @@ class ChatResponse(BaseModel):
     trace: list[dict[str, object]]
 
 
+@tool("echo")
 def _echo(message: str) -> str:
+    """Echo the user's message back."""
     return f"echo: {message}"
 
 
+@tool("db_query")
 def _db_query(sql: str) -> list[dict[str, object]]:
-    """Execute a SELECT (or WITH) and return rows as list of dicts."""
+    """Execute a read-only SQL query against the analyst database.
+
+    Only SELECT and WITH statements are allowed.
+    Schema: customers(id, name, email); orders(id, customer_id, amount, placed_on)
+    with orders.customer_id -> customers.id.
+    """
     db_path = Path(os.environ.get("ZTA_DB_PATH", "./data.db"))
     conn = sqlite3.connect(str(db_path))
     try:
@@ -70,43 +79,13 @@ def _db_query(sql: str) -> list[dict[str, object]]:
         conn.close()
 
 
+@tool("db_write")
 def _db_write(sql: str) -> str:  # pragma: no cover -- denied by policy
-    """Stub. Never called because policy denies db_write in MVP."""
+    """Write to the database. Disabled for analyst-bot in the MVP."""
     return "db_write is not permitted in this demo"
 
 
-_TOOL_SCHEMAS: list[dict[str, object]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "db_query",
-            "description": (
-                "Execute a read-only SQL query against the analyst database. "
-                "Only SELECT and WITH statements are allowed. "
-                "Schema: customers(id, name, email); "
-                "orders(id, customer_id, amount, placed_on) "
-                "with orders.customer_id -> customers.id."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"sql": {"type": "string"}},
-                "required": ["sql"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "db_write",
-            "description": "Write to the database. Disabled for analyst-bot.",
-            "parameters": {
-                "type": "object",
-                "properties": {"sql": {"type": "string"}},
-                "required": ["sql"],
-            },
-        },
-    },
-]
+_TOOLS: list[BaseTool] = [_db_query, _db_write, _echo]
 
 
 def _get_chat_model() -> ChatOpenAI:
@@ -124,16 +103,15 @@ def _run_chat_loop(
     cfg: AppConfig,
 ) -> tuple[list[dict[str, object]], str, list[dict[str, object]]]:
     """Run the LangChain ChatOpenAI tool-calling loop. Returns (final_messages, reply, trace_dicts)."""
-    chat = _get_chat_model().bind_tools(_TOOL_SCHEMAS)
+    chat = _get_chat_model().bind_tools(_TOOLS)
     with session(
         agent=cfg.agent_id,
         policy=cfg.policy_path,
         audit=cfg.audit_path,
         key_dir=cfg.key_dir,
     ) as agent:
-        agent.registry.register(_echo, name="echo")
-        agent.registry.register(_db_query, name="db_query")
-        agent.registry.register(_db_write, name="db_write")
+        for t in _TOOLS:
+            agent.registry.register(t)
         for _ in range(MAX_TOOL_ITERATIONS):
             ai = chat.invoke(messages)
             if not ai.tool_calls:

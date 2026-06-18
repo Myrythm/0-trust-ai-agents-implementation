@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from langchain_core.tools import BaseTool
+
 from zta.audit import Audit
 from zta.identity import Identity
 from zta.policy import Decision, Policy
@@ -84,7 +86,7 @@ class Agent:
                 request_id=request_id, ts=ts, name=name, args=args, error_msg=str(exc)
             )
         try:
-            value = fn(**args)
+            value = fn.invoke(args) if isinstance(fn, BaseTool) else fn(**args)
         except Exception as exc:
             return self._record_error(
                 request_id=request_id, ts=ts, name=name, args=args, error_msg=str(exc)
