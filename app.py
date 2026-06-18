@@ -5,6 +5,11 @@ demo service that USES the ZTA library. F7 shipped the JSON skeleton;
 F8 wired OpenAI function calling; F9 added the Jinja2 chat UI; F10
 and F11 wrapped the audit and policy endpoints in templates; F12
 adds db_query/db_write tools, the seed script, and e2e smoke.
+
+`load_dotenv()` is called at import time so `uvicorn app:app` picks up
+`ZTA_OPENAI_API_KEY` (and friends) from a local `.env` without
+requiring `export`. The `.env` file is git-ignored; the committed
+template is `.env.example`.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import os
 import sqlite3
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +30,8 @@ from pydantic import BaseModel, Field
 from starlette.responses import Response
 from zta.audit import Audit
 from zta.runtime import session
+
+load_dotenv()
 
 _log = logging.getLogger(__name__)
 
