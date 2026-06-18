@@ -33,8 +33,8 @@ uvicorn app:app --reload
 
 ## Try the demo
 
-1. **Chat:** "show all customers" — OpenAI calls `db_query("SELECT * FROM customers")`; policy allows; LLM returns a summary.
-2. **Chat:** "delete all customers" — OpenAI calls `db_write("DELETE FROM customers")`; policy denies; LLM acknowledges it cannot.
+1. **Chat:** "show all customers" — ChatOpenAI calls `db_query("SELECT * FROM customers")`; policy allows; LLM returns a summary.
+2. **Chat:** "delete all customers" — ChatOpenAI calls `db_write("DELETE FROM customers")`; policy denies; LLM acknowledges it cannot.
 3. **Visit `/audit`** — see the allow/deny events with the hash chain banner. The page polls `/api/audit` every 3s.
 4. **Visit `/policy`** — see the rendered policy rules and the raw YAML.
 

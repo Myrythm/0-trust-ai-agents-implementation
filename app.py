@@ -82,7 +82,10 @@ _TOOL_SCHEMAS: list[dict[str, object]] = [
             "name": "db_query",
             "description": (
                 "Execute a read-only SQL query against the analyst database. "
-                "Only SELECT and WITH statements are allowed."
+                "Only SELECT and WITH statements are allowed. "
+                "Schema: customers(id, name, email); "
+                "orders(id, customer_id, amount, placed_on) "
+                "with orders.customer_id -> customers.id."
             ),
             "parameters": {
                 "type": "object",
