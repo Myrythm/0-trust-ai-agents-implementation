@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
 
@@ -26,6 +27,14 @@ class Role(StrEnum):
     ADMIN = "admin"
     ANALYST = "analyst"
     VIEWER = "viewer"
+
+
+class RoleRow(TypedDict):
+    """One row of the rendered permission matrix (see `Permissions.as_table`)."""
+
+    role: str
+    pages: list[str]
+    tools: list[str]
 
 
 KNOWN_PAGES: frozenset[str] = frozenset({"chat", "audit", "policy", "users", "roles"})
@@ -86,12 +95,12 @@ class Permissions:
     def roles(self) -> list[str]:
         return sorted(self._pages)
 
-    def as_table(self) -> list[dict[str, object]]:
+    def as_table(self) -> list[RoleRow]:
         return [
-            {
-                "role": role,
-                "pages": sorted(self._pages.get(role, set())),
-                "tools": sorted(self._tools.get(role, set())),
-            }
+            RoleRow(
+                role=role,
+                pages=sorted(self._pages.get(role, set())),
+                tools=sorted(self._tools.get(role, set())),
+            )
             for role in self.roles()
         ]
