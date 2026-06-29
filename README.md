@@ -23,6 +23,7 @@ The chat runtime is built on a LangGraph `StateGraph` that streams the model's r
 - [Highlights](#highlights)
 - [Quickstart](#quickstart)
 - [Try the demo](#try-the-demo)
+- [Users & roles](#users--roles)
 - [Architecture](#architecture)
 - [How it works: the LangGraph workflow](#how-it-works-the-langgraph-workflow)
 - [Configuration](#configuration)
@@ -45,6 +46,7 @@ The chat runtime is built on a LangGraph `StateGraph` that streams the model's r
 - **Cryptographic agent identity** — an Ed25519 keypair per agent, stored as a `0600`-permission PEM.
 - **Hash-chained audit log** — `audit.jsonl` links `prev_hash` → `this_hash`, so tampering is detectable.
 - **Deny-by-default policy** — a missing rule, a non-matching `when`, or a rule error all fall through to deny.
+- **Role-based access (RBAC)** — authenticated `manager`/`sales`/`catalog` users; roles gate pages and which Chinook tables `db_query` may read, enforced at the SQLite engine.
 - **Self-contained** — SQLite from the stdlib. No external DB, no Docker, no cloud.
 
 ---
@@ -59,11 +61,15 @@ uv pip install -e ".[dev]"
 # 2. Seed the demo database (downloads the Chinook media-store dataset, MIT)
 python examples/seed_db.py
 
-# 3. Configure
+# 3. Seed the default users (manager / sales / catalog)
+python examples/seed_users.py
+
+# 4. Configure
 export ZTA_OPENAI_API_KEY=sk-...
 export ZTA_DB_PATH=./data.db
+export ZTA_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 
-# 4. Run
+# 5. Run
 uvicorn app:app --reload
 ```
 
@@ -81,6 +87,27 @@ Then open **http://localhost:8000**.
 | 2️⃣ | Chat: **`delete invoice 1`** | The model calls `db_write("DELETE FROM Invoice ...")`; the policy engine **denies** it, a deny card appears, and the agent explains the action isn't permitted. |
 | 3️⃣ | Visit **`/audit`** | Review every allow/deny decision in the append-only log. The page polls `/api/audit` every 3 s and shows chain validity. |
 | 4️⃣ | Visit **`/policy`** | Inspect the rendered rules and the underlying YAML. |
+
+---
+
+## Users & roles
+
+The app requires login. `examples/seed_users.py` creates three demo accounts (change the passwords for any real use):
+
+| Username | Password | Role | Pages | Can read |
+|---|---|---|---|---|
+| `manager` | `manager123` | manager | all (+ `/users`, `/roles`) | **all** tables incl. `Employee`; may `db_write` |
+| `sales` | `sales123` | sales | chat, audit | catalog + `Customer`/`Invoice`/`InvoiceLine` — **not** `Employee` |
+| `catalog` | `catalog123` | catalog | chat | catalog only (`Artist`, `Album`, `Track`, …) — **not** `Customer`/`Invoice`/`Employee` |
+
+**Two-layer authorization** (composed with AND):
+
+1. **RBAC** (`roles.yaml`) — *who* may touch which pages/tools/tables. Checked first.
+2. **Policy** (`policy.yaml`) — *whether the specific call is safe* (e.g. `db_query` must be `SELECT`/`WITH`). Stays role-agnostic.
+
+Table scope is enforced by a **SQLite authorizer** at the engine level — so a `catalog` user asking "list all customers" is denied by the database itself, recorded as a clean authorization-deny in the audit log against their username. Edit `roles.yaml` to change permissions; view the live matrix at **`/roles`** and manage accounts at **`/users`** (both manager-only).
+
+Set **`ZTA_SECRET_KEY`** to a long random string to keep sessions stable across restarts (an ephemeral key is used if unset). Passwords are hashed with **argon2id**.
 
 ---
 
@@ -152,6 +179,8 @@ All settings come from environment variables (or a local `.env` loaded by `pytho
 | `ZTA_POLICY_PATH` | `./policy.yaml` | Policy file path. |
 | `ZTA_AUDIT_PATH` | `./audit.jsonl` | Append-only audit log path. |
 | `ZTA_KEY_DIR` | `./.zta/keys` | Directory for Ed25519 agent keypairs. |
+| `ZTA_SECRET_KEY` | _(ephemeral)_ | Secret for signing session cookies; set a long random string in real use. |
+| `ZTA_ROLES_PATH` | `./roles.yaml` | RBAC role matrix (pages/tools/tables per role). |
 | `ZTA_ENV` | `dev` | Environment label. |
 | `ZTA_LOG_LEVEL` | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 
