@@ -7,8 +7,8 @@ Workflow per task: GitHub issue → develop → test → push `feature/<slug>` �
 
 | # | Task | Branch | Issue | PR | Merged |
 |---|------|--------|-------|----|:------:|
-| 1 | RBAC permission matrix (`zta/rbac.py` + `roles.yaml`) | `feature/rbac-matrix` | — | — | ☐ |
-| 2 | User store (`zta/users.py`) | `feature/user-store` | — | — | ☐ |
+| 1 | RBAC permission matrix (`zta/rbac.py` + `roles.yaml`) | `feature/rbac-matrix` | #28 | #29 | ✅ |
+| 2 | User store (`zta/users.py`) | `feature/user-store` | #30 | — | ☐ |
 | 3 | Signed session cookie (`zta/webauth.py`) | `feature/webauth-cookie` | — | — | ☐ |
 | 4 | Audit user attribution (`zta/audit.py`) | `feature/audit-user` | — | — | ☐ |
 | 5 | Runtime RBAC enforcement (`zta/runtime.py`) | `feature/runtime-rbac` | — | — | ☐ |
