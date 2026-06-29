@@ -285,3 +285,95 @@ def test_tool_result_shape_on_deny(tmp_path: Path) -> None:
     assert r.ok is False
     assert r.value is None
     assert r.error == "nope"
+
+
+# ---------- Layer-1 RBAC enforcement (Task 5) ----------
+
+
+def _rbac_perms(tmp_path: Path):
+    from zta.rbac import Permissions
+
+    p = tmp_path / "roles.yaml"
+    p.write_text(
+        "roles:\n"
+        '  manager:\n    pages: [chat]\n    tools: [echo, db_query, db_write]\n    tables: "*"\n'
+        "  catalog:\n    pages: [chat]\n    tools: [echo, db_query]\n    tables: [Artist]\n"
+    )
+    return Permissions.load(p)
+
+
+def _echo_policy(tmp_path: Path) -> Path:
+    return write_policy(
+        tmp_path,
+        """
+        default: deny
+        rules:
+          - tool: echo
+            decision: allow
+        """,
+    )
+
+
+def test_rbac_denies_tool_not_in_role(tmp_path: Path) -> None:
+    """catalog has no db_write tool -> Layer-1 deny before policy runs."""
+    with session(
+        agent="bot",
+        policy=_echo_policy(tmp_path),
+        audit=tmp_path / "a.jsonl",
+        key_dir=write_key_dir(tmp_path),
+        user="cara",
+        role="catalog",
+        permissions=_rbac_perms(tmp_path),
+    ) as a:
+        a.registry.register(lambda message: f"echo: {message}", name="echo")
+        result = a.tool("db_write", sql="DROP TABLE Track")
+    assert result.ok is False
+    assert "rbac" in (result.error or "").lower()
+    assert a.trace[-1].decision == "deny"
+
+
+def test_rbac_allows_then_policy_executes(tmp_path: Path) -> None:
+    with session(
+        agent="bot",
+        policy=_echo_policy(tmp_path),
+        audit=tmp_path / "a.jsonl",
+        key_dir=write_key_dir(tmp_path),
+        user="cara",
+        role="catalog",
+        permissions=_rbac_perms(tmp_path),
+    ) as a:
+        a.registry.register(lambda message: f"echo: {message}", name="echo")
+        result = a.tool("echo", message="hi")
+    assert result.ok is True
+    assert result.value == "echo: hi"
+
+
+def test_audit_records_user(tmp_path: Path) -> None:
+    audit_path = tmp_path / "a.jsonl"
+    with session(
+        agent="bot",
+        policy=_echo_policy(tmp_path),
+        audit=audit_path,
+        key_dir=write_key_dir(tmp_path),
+        user="cara",
+        role="catalog",
+        permissions=_rbac_perms(tmp_path),
+    ) as a:
+        a.registry.register(lambda message: f"echo: {message}", name="echo")
+        a.tool("echo", message="hi")
+    assert Audit(audit_path).read_all()[-1].user == "cara"
+
+
+def test_no_permissions_skips_rbac(tmp_path: Path) -> None:
+    """With no permissions matrix, the RBAC layer is skipped (policy still runs)."""
+    with session(
+        agent="bot",
+        policy=_echo_policy(tmp_path),
+        audit=tmp_path / "a.jsonl",
+        key_dir=write_key_dir(tmp_path),
+        role="catalog",
+    ) as a:
+        a.registry.register(lambda message: f"echo: {message}", name="echo")
+        result = a.tool("echo", message="hi")
+    assert result.ok is True
+    assert result.value == "echo: hi"
