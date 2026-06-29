@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Python `>=3.11`; type-checked with `mypy` (strict) and linted/formatted with `ruff` (line-length 100).
-- **No new runtime dependencies** — auth/hashing/signing use only the Python standard library.
+- **Minimal runtime dependencies** — session signing uses only the stdlib (`hmac`); the single auth dependency is **`argon2-cffi`** for argon2id password hashing (chosen over stdlib PBKDF2; see Revision). No others.
 - `policy.yaml` and `zta/policy.py` stay **role-agnostic** — RBAC never leaks into the policy engine.
 - Deny-by-default at both layers.
 - Tests run via WSL Ubuntu venv: `wsl -d Ubuntu -e bash -lc 'cd /mnt/d/dev/0trust-ai-agents && .venv/bin/python -m pytest ...'`.
@@ -34,6 +34,7 @@ Concretely this changes:
 - **seed defaults** (Task 6) — `manager/sales/catalog` (e.g. `manager/manager123`, `sales/sales123`, `catalog/catalog123`).
 - **`/users`, `/roles`, `/policy` guards** (Tasks 6–7) — gated to `manager` (not `admin`).
 - **test helpers / role args** — use `manager` where the old text used `admin`.
+- **password hashing** — Task 2 shipped stdlib PBKDF2; this was later replaced by **argon2id** (`argon2-cffi`), the one allowed runtime dependency. `hash_password`/`verify_hash` use `argon2.PasswordHasher`; stored hashes are `$argon2id$...`. (Issue #38.)
 
 **New task — Table-scoped `db_query` (after Task 6 auth wiring):** build the `db_query` tool **per request**, bound to the current role's readable tables, installing a SQLite `set_authorizer` callback that returns `SQLITE_DENY` for `SQLITE_READ` on out-of-scope tables. Catch the resulting access error and record a clean **authorization deny** (`rbac: role 'catalog' not permitted to read table 'Employee'`) in trace + audit. Tests: catalog querying `Customer`/`Employee` → deny; sales querying `Employee` → deny; manager → allowed; scoped `SELECT` within scope → allowed.
 

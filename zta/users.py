@@ -1,45 +1,34 @@
-"""User store backed by SQLite, with stdlib password hashing.
+"""User store backed by SQLite, with argon2id password hashing.
 
-Passwords are stored as `pbkdf2$<iterations>$<salt_b64>$<hash_b64>` using
-`hashlib.pbkdf2_hmac` — no third-party crypto dependency. The `users` table
-lives in the same SQLite database used by the demo tools.
+Passwords are hashed with argon2id (via `argon2-cffi`), the current
+best-practice memory-hard KDF. The encoded hash is self-describing
+(`$argon2id$v=19$m=...,t=...,p=...$salt$hash`) and embeds its own
+parameters + salt. The `users` table lives in the same SQLite database
+used by the demo tools.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-_ITERATIONS = 240_000
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
+
+_hasher = PasswordHasher()
 
 
 def hash_password(password: str) -> str:
-    salt = os.urandom(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _ITERATIONS)
-    return (
-        f"pbkdf2${_ITERATIONS}$"
-        f"{base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
-    )
+    return _hasher.hash(password)
 
 
 def verify_hash(password: str, stored: str) -> bool:
     try:
-        scheme, iter_s, salt_b64, hash_b64 = stored.split("$")
-        if scheme != "pbkdf2":
-            return False
-        iterations = int(iter_s)
-        salt = base64.b64decode(salt_b64)
-        expected = base64.b64decode(hash_b64)
-    except (ValueError, TypeError):
+        return _hasher.verify(stored, password)
+    except (VerificationError, InvalidHashError):
         return False
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return hmac.compare_digest(digest, expected)
 
 
 @dataclass

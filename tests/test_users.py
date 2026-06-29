@@ -11,7 +11,7 @@ from zta.users import User, UserStore, hash_password, verify_hash
 def test_hash_roundtrip() -> None:
     h = hash_password("s3cret")
     assert h != "s3cret"
-    assert h.startswith("pbkdf2$")
+    assert h.startswith("$argon2id$")
     assert verify_hash("s3cret", h) is True
     assert verify_hash("wrong", h) is False
 

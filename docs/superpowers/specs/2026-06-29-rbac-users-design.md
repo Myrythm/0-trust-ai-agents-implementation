@@ -75,7 +75,7 @@ zta_tools node → agent.tool(name, args)
 | File | Responsibility |
 |---|---|
 | `zta/rbac.py` | `Role` enum (`admin`/`analyst`/`viewer`); `Permissions` loaded from `roles.yaml`; `tool_allowed(role, tool)`, `page_allowed(role, page)`, `as_table()`. Validates at load time that every role name and referenced tool/page is known — typos fail loudly, not silently. |
-| `zta/users.py` | `UserStore` over SQLite (`users` table). `User` (username, role, password_hash, created_at); `create_user`, `get_user`, `verify_password`, `list_users`, `delete_user`. Passwords hashed with stdlib `hashlib.pbkdf2_hmac` + per-user salt. No new dependency. |
+| `zta/users.py` | `UserStore` over SQLite (`users` table). `User` (username, role, password_hash, created_at); `create_user`, `get_user`, `verify_password`, `list_users`, `delete_user`. Passwords hashed with **argon2id** via `argon2-cffi` (self-describing `$argon2id$...` encoding). |
 | `zta/webauth.py` | Signed session-cookie helpers using stdlib `hmac` (~20 lines): `sign(payload) -> str`, `verify(cookie) -> payload | None`. Stateless; no server-side session store. |
 | `roles.yaml` | The RBAC matrix (single source of truth for "who can do what"). |
 | `templates/login.html`, `templates/users.html`, `templates/roles.html` | Login page; admin user-management page; read-only matrix view. |
@@ -119,7 +119,7 @@ roles:
 CREATE TABLE users (
   username      TEXT PRIMARY KEY,
   role          TEXT NOT NULL,          -- admin|analyst|viewer
-  password_hash TEXT NOT NULL,          -- pbkdf2$<iter>$<salt_b64>$<hash_b64>
+  password_hash TEXT NOT NULL,          -- $argon2id$v=19$m=...,t=...,p=...$salt$hash
   created_at    TEXT NOT NULL
 );
 ```
