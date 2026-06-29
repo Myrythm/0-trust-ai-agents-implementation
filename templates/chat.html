@@ -2,26 +2,40 @@
 {% block title %}ZTA Chat{% endblock %}
 {% block nav_chat %}active{% endblock %}
 {% block content %}
-<h1>ZTA Chat</h1>
-<form id="chat-form" class="chat-form">
-  <textarea
-    id="chat-input"
-    name="message"
-    rows="3"
-    required
-    placeholder="Ask the analyst bot something..."
-  ></textarea>
-  <button id="chat-submit" type="submit">Send</button>
-</form>
+<div class="chat" aria-label="ZTA Chat">
+  <div id="chat-scroll" class="chat-scroll">
+    <section id="chat-messages" class="messages">
+      <!-- messages + inline tool cards are populated by the streaming handler -->
+    </section>
 
-<section id="chat-messages" class="messages">
-  <!-- populated by JavaScript streaming handler -->
-</section>
-
-<section id="chat-trace" class="trace">
-  <h2>Tool trace</h2>
-  <div id="chat-trace-list">
-    <!-- populated by JavaScript streaming handler -->
+    <div id="chat-empty" class="empty-state">
+      <div class="empty-logo">🛡️</div>
+      <h1>ZTA Chat</h1>
+      <p class="empty-sub">Ask the analyst bot anything. Every tool call is checked against policy and written to a tamper-evident audit log.</p>
+      <div class="suggestions">
+        <button class="suggestion" type="button">List all customers</button>
+        <button class="suggestion" type="button">What were the largest orders?</button>
+        <button class="suggestion" type="button">Try to delete a customer</button>
+      </div>
+    </div>
   </div>
-</section>
+
+  <div class="composer-wrap">
+    <form id="chat-form" class="composer">
+      <textarea
+        id="chat-input"
+        name="message"
+        rows="1"
+        required
+        placeholder="Message the analyst bot…"
+      ></textarea>
+      <button id="chat-submit" type="submit" aria-label="Send">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3.39 10.1 15 12l-11.61 1.9z"/>
+        </svg>
+      </button>
+    </form>
+    <p class="composer-hint">Enter to send · Shift+Enter for a new line</p>
+  </div>
+</div>
 {% endblock %}
