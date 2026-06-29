@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import Response
 from zta.agent_graph import build_zta_graph
 from zta.audit import Audit
+from zta.errors import RbacError
 from zta.rbac import KNOWN_PAGES, Permissions
 from zta.runtime import session
 from zta.users import UserStore
@@ -73,31 +74,64 @@ def _echo(message: str) -> str:
     return f"echo: {message}"
 
 
-@tool("db_query")
-def _db_query(sql: str) -> list[dict[str, object]]:
-    """Execute a read-only SQL query against the Chinook media-store database.
+def _make_db_query(allowed_tables: set[str] | None, role: str) -> BaseTool:
+    """Build a db_query tool scoped to `allowed_tables` (None = all tables).
 
-    Only SELECT and WITH statements are allowed.
-    Schema (SQLite, Chinook v1.4.5):
-      Artist(ArtistId, Name)
-      Album(AlbumId, Title, ArtistId -> Artist)
-      Track(TrackId, Name, AlbumId -> Album, MediaTypeId -> MediaType,
-            GenreId -> Genre, Composer, Milliseconds, Bytes, UnitPrice)
-      Genre(GenreId, Name); MediaType(MediaTypeId, Name)
-      Playlist(PlaylistId, Name); PlaylistTrack(PlaylistId -> Playlist, TrackId -> Track)
-      Customer(CustomerId, FirstName, LastName, Email, Country, SupportRepId -> Employee)
-      Employee(EmployeeId, FirstName, LastName, Title, ReportsTo -> Employee)
-      Invoice(InvoiceId, CustomerId -> Customer, InvoiceDate, BillingCountry, Total)
-      InvoiceLine(InvoiceLineId, InvoiceId -> Invoice, TrackId -> Track, UnitPrice, Quantity)
+    When scoped, a SQLite authorizer denies reads of any table outside the set
+    at the engine level; the denial is surfaced as an RbacError so the runtime
+    records a clean authorization deny.
     """
-    db_path = Path(os.environ.get("ZTA_DB_PATH", "./data.db"))
-    conn = sqlite3.connect(str(db_path))
-    try:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(sql).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+
+    @tool("db_query")
+    def db_query(sql: str) -> list[dict[str, object]]:
+        """Execute a read-only SQL query against the Chinook media-store database.
+
+        Only SELECT and WITH statements are allowed.
+        Schema (SQLite, Chinook v1.4.5):
+          Artist(ArtistId, Name)
+          Album(AlbumId, Title, ArtistId -> Artist)
+          Track(TrackId, Name, AlbumId -> Album, MediaTypeId -> MediaType,
+                GenreId -> Genre, Composer, Milliseconds, Bytes, UnitPrice)
+          Genre(GenreId, Name); MediaType(MediaTypeId, Name)
+          Playlist(PlaylistId, Name); PlaylistTrack(PlaylistId -> Playlist, TrackId -> Track)
+          Customer(CustomerId, FirstName, LastName, Email, Country, SupportRepId -> Employee)
+          Employee(EmployeeId, FirstName, LastName, Title, ReportsTo -> Employee)
+          Invoice(InvoiceId, CustomerId -> Customer, InvoiceDate, BillingCountry, Total)
+          InvoiceLine(InvoiceLineId, InvoiceId -> Invoice, TrackId -> Track, UnitPrice, Quantity)
+        """
+        db_path = Path(os.environ.get("ZTA_DB_PATH", "./data.db"))
+        conn = sqlite3.connect(str(db_path))
+        denied: list[str] = []
+
+        def authorizer(
+            action: int, arg1: str | None, _arg2: str | None, _db: str | None, _trig: str | None
+        ) -> int:
+            if (
+                allowed_tables is not None
+                and action == sqlite3.SQLITE_READ
+                and arg1 is not None
+                and arg1 not in allowed_tables
+            ):
+                denied.append(arg1)
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        try:
+            conn.row_factory = sqlite3.Row
+            if allowed_tables is not None:
+                conn.set_authorizer(authorizer)
+            rows = conn.execute(sql).fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.DatabaseError as exc:
+            if denied:
+                raise RbacError(
+                    f"rbac: role {role!r} not permitted to read table {denied[0]!r}"
+                ) from exc
+            raise
+        finally:
+            conn.close()
+
+    return db_query
 
 
 @tool("db_write")
@@ -106,7 +140,9 @@ def _db_write(sql: str) -> str:  # pragma: no cover -- denied by policy
     return "db_write is not permitted in this demo"
 
 
-_TOOLS: list[BaseTool] = [_db_query, _db_write, _echo]
+def _tools_for(permissions: Permissions, role: str) -> list[BaseTool]:
+    """Per-request tool list with db_query scoped to the role's readable tables."""
+    return [_make_db_query(permissions.tables_allowed(role), role), _db_write, _echo]
 
 
 def _get_chat_model() -> ChatOpenAI:
@@ -188,9 +224,10 @@ async def _stream_chat(
         role=role,
         permissions=permissions,
     ) as agent:
-        for t in _TOOLS:
+        tools = _tools_for(permissions, role)
+        for t in tools:
             agent.registry.register(t)
-        graph = build_zta_graph(model, agent, _TOOLS)
+        graph = build_zta_graph(model, agent, tools)
         initial_state = {"messages": [_dict_to_message(m) for m in messages]}
         try:
             async for event in graph.astream_events(initial_state, version="v2"):
@@ -227,9 +264,10 @@ async def _run_chat(
         role=role,
         permissions=permissions,
     ) as agent:
-        for t in _TOOLS:
+        tools = _tools_for(permissions, role)
+        for t in tools:
             agent.registry.register(t)
-        graph = build_zta_graph(model, agent, _TOOLS)
+        graph = build_zta_graph(model, agent, tools)
         initial_state = {"messages": [_dict_to_message(m) for m in messages]}
         final_state = await graph.ainvoke(initial_state)
         final_messages = final_state.get("messages", [])

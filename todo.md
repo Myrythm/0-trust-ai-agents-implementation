@@ -15,8 +15,8 @@ Workflow per task: GitHub issue → develop → test → push `feature/<slug>` �
 | 3 | Signed session cookie (`zta/webauth.py`) | #36 | #37 | ✅ |
 | 4 | Audit user attribution (`zta/audit.py`) | #40 | #41 | ✅ |
 | 5 | Runtime RBAC enforcement (`zta/runtime.py`) | #42 | #43 | ✅ |
-| 6 | Auth & route guards (`app.py`, login, seed) | #44 | — | ☐ |
-| 7 | Table-scoped `db_query` (SQLite authorizer) | — | — | ☐ |
+| 6 | Auth & route guards (`app.py`, login, seed) | #44 | #45 | ✅ |
+| 7 | Table-scoped `db_query` (SQLite authorizer) | #46 | — | ☐ |
 | 8 | Admin pages `/users` & `/roles` | — | — | ☐ |
 | 9 | Documentation & config | — | — | ☐ |
 

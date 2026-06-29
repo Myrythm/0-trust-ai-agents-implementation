@@ -377,3 +377,23 @@ def test_no_permissions_skips_rbac(tmp_path: Path) -> None:
         result = a.tool("echo", message="hi")
     assert result.ok is True
     assert result.value == "echo: hi"
+
+
+def test_tool_rbac_error_recorded_as_deny(tmp_path: Path) -> None:
+    """A tool raising RbacError (e.g. table-scope deny) is recorded as deny, not error."""
+    from zta.errors import RbacError
+
+    def denier(message: str) -> str:
+        raise RbacError("rbac: role 'catalog' not permitted to read table 'Employee'")
+
+    with session(
+        agent="bot",
+        policy=_echo_policy(tmp_path),
+        audit=tmp_path / "a.jsonl",
+        key_dir=write_key_dir(tmp_path),
+    ) as a:
+        a.registry.register(denier, name="echo")
+        result = a.tool("echo", message="hi")
+    assert result.ok is False
+    assert a.trace[-1].decision == "deny"
+    assert "rbac" in (result.error or "")

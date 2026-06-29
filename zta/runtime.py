@@ -22,6 +22,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from zta.audit import Audit
+from zta.errors import RbacError
 from zta.identity import Identity
 from zta.policy import Decision, Policy
 from zta.rbac import Permissions
@@ -101,6 +102,11 @@ class Agent:
             )
         try:
             value = fn.invoke(args) if isinstance(fn, BaseTool) else fn(**args)
+        except RbacError as exc:
+            # A tool raised an authorization error (e.g. table-scope deny) -> deny, not error.
+            return self._record_deny(
+                request_id=request_id, ts=ts, name=name, args=args, reason=str(exc)
+            )
         except Exception as exc:
             return self._record_error(
                 request_id=request_id, ts=ts, name=name, args=args, error_msg=str(exc)

@@ -678,3 +678,48 @@ async def test_chat_stream_missing_api_key_returns_error_event(tmp_path: Path, m
     resp = client.post("/chat/stream", json={"messages": [{"role": "user", "content": "hi"}]})
     assert resp.status_code == 200
     assert "error" in resp.text
+
+
+# ---------- Table-scoped db_query (Task 7) ----------
+
+
+def _seed_scope_db(tmp_path: Path) -> Path:
+    import sqlite3
+
+    db = tmp_path / "scope.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE Artist (ArtistId INTEGER, Name TEXT)")
+    conn.execute("CREATE TABLE Employee (EmployeeId INTEGER, Name TEXT)")
+    conn.execute("INSERT INTO Artist VALUES (1, 'AC/DC')")
+    conn.execute("INSERT INTO Employee VALUES (1, 'Jane')")
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_db_query_scope_allows_in_scope(tmp_path: Path, monkeypatch) -> None:
+    from app import _make_db_query
+
+    monkeypatch.setenv("ZTA_DB_PATH", str(_seed_scope_db(tmp_path)))
+    tool = _make_db_query({"Artist"}, "catalog")
+    rows = tool.invoke({"sql": "SELECT Name FROM Artist"})
+    assert rows == [{"Name": "AC/DC"}]
+
+
+def test_db_query_scope_denies_out_of_scope(tmp_path: Path, monkeypatch) -> None:
+    from app import _make_db_query
+    from zta.errors import RbacError
+
+    monkeypatch.setenv("ZTA_DB_PATH", str(_seed_scope_db(tmp_path)))
+    tool = _make_db_query({"Artist"}, "catalog")
+    with pytest.raises(RbacError, match="Employee"):
+        tool.invoke({"sql": "SELECT * FROM Employee"})
+
+
+def test_db_query_manager_reads_any_table(tmp_path: Path, monkeypatch) -> None:
+    from app import _make_db_query
+
+    monkeypatch.setenv("ZTA_DB_PATH", str(_seed_scope_db(tmp_path)))
+    tool = _make_db_query(None, "manager")  # None scope = all tables
+    rows = tool.invoke({"sql": "SELECT Name FROM Employee"})
+    assert rows == [{"Name": "Jane"}]
