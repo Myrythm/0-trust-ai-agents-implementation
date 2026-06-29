@@ -64,11 +64,20 @@ def _echo(message: str) -> str:
 
 @tool("db_query")
 def _db_query(sql: str) -> list[dict[str, object]]:
-    """Execute a read-only SQL query against the analyst database.
+    """Execute a read-only SQL query against the Chinook media-store database.
 
     Only SELECT and WITH statements are allowed.
-    Schema: customers(id, name, email); orders(id, customer_id, amount, placed_on)
-    with orders.customer_id -> customers.id.
+    Schema (SQLite, Chinook v1.4.5):
+      Artist(ArtistId, Name)
+      Album(AlbumId, Title, ArtistId -> Artist)
+      Track(TrackId, Name, AlbumId -> Album, MediaTypeId -> MediaType,
+            GenreId -> Genre, Composer, Milliseconds, Bytes, UnitPrice)
+      Genre(GenreId, Name); MediaType(MediaTypeId, Name)
+      Playlist(PlaylistId, Name); PlaylistTrack(PlaylistId -> Playlist, TrackId -> Track)
+      Customer(CustomerId, FirstName, LastName, Email, Country, SupportRepId -> Employee)
+      Employee(EmployeeId, FirstName, LastName, Title, ReportsTo -> Employee)
+      Invoice(InvoiceId, CustomerId -> Customer, InvoiceDate, BillingCountry, Total)
+      InvoiceLine(InvoiceLineId, InvoiceId -> Invoice, TrackId -> Track, UnitPrice, Quantity)
     """
     db_path = Path(os.environ.get("ZTA_DB_PATH", "./data.db"))
     conn = sqlite3.connect(str(db_path))

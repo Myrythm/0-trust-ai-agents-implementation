@@ -471,15 +471,28 @@ def test_api_audit_still_returns_json_after_f10(tmp_path: Path, monkeypatch) -> 
 
 
 def test_e2e_demo_seed_creates_tables(tmp_path) -> None:
-    """examples/seed_db.py creates customers + orders tables with rows."""
+    """examples/seed_db.py builds the Chinook DB from a SQL source.
+
+    Uses ZTA_CHINOOK_SQL to point at a small local fixture so the test stays
+    offline (no network download) while exercising the real seed mechanism.
+    """
     import os
     import sqlite3
     import subprocess
     import sys
 
+    fixture = tmp_path / "chinook_fixture.sql"
+    fixture.write_text(
+        "CREATE TABLE Artist (ArtistId INTEGER PRIMARY KEY, Name TEXT);\n"
+        "INSERT INTO Artist (Name) VALUES ('AC/DC'),('Accept'),('Aerosmith');\n"
+        "CREATE TABLE Album (AlbumId INTEGER PRIMARY KEY, Title TEXT, ArtistId INTEGER);\n"
+        "INSERT INTO Album (Title, ArtistId) VALUES ('For Those About To Rock',1),"
+        "('Let There Be Rock',1);\n"
+    )
     db_path = tmp_path / "demo.db"
     env = os.environ.copy()
     env["ZTA_DB_PATH"] = str(db_path)
+    env["ZTA_CHINOOK_SQL"] = str(fixture)
     result = subprocess.run(
         [sys.executable, "examples/seed_db.py"],
         capture_output=True,
@@ -489,11 +502,11 @@ def test_e2e_demo_seed_creates_tables(tmp_path) -> None:
     )
     assert result.returncode == 0, result.stderr
     conn = sqlite3.connect(str(db_path))
-    customers = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
-    orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    artists = conn.execute("SELECT COUNT(*) FROM Artist").fetchone()[0]
+    albums = conn.execute("SELECT COUNT(*) FROM Album").fetchone()[0]
     conn.close()
-    assert customers == 5
-    assert orders == 10
+    assert artists == 3
+    assert albums == 2
     db_path.unlink()
 
 
