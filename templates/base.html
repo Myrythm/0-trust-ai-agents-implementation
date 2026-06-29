@@ -3,27 +3,64 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>{% block title %}ZTA Control Plane{% endblock %}</title>
+  <script>
+    // Apply saved theme before paint to avoid a flash of the wrong theme.
+    (function () {
+      try {
+        var t = localStorage.getItem("zta-theme");
+        if (t !== "light" && t !== "dark") {
+          t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = t;
+      } catch (e) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <div class="nav-wrap">
-      <a href="/" class="logo">
-        <span class="dot{% block dot_class %}{% endblock %}"></span>
-        ZTA//
-      </a>
-      <nav>
-        <a href="/" class="{% block nav_chat %}{% endblock %}">Chat</a>
-        <a href="/audit" class="{% block nav_audit %}{% endblock %}">Audit</a>
-        <a href="/policy" class="{% block nav_policy %}{% endblock %}">Policy</a>
-      </nav>
-    </div>
-  </header>
-  <main>
-    {% block content %}{% endblock %}
-  </main>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <a href="/" class="brand">
+          <span class="dot{% block dot_class %}{% endblock %}" title="audit chain status"></span>
+          <span class="brand-name">ZTA</span>
+          <span class="brand-sub">Control Plane</span>
+        </a>
+
+        <button id="new-chat" class="new-chat" type="button">
+          <span class="plus">+</span> <span class="nc-label">New chat</span>
+        </button>
+
+        <nav>
+          <a href="/" class="nav-link {% block nav_chat %}{% endblock %}">
+            <span class="nav-ico">💬</span> <span class="nav-label">Chat</span>
+          </a>
+          <a href="/audit" class="nav-link {% block nav_audit %}{% endblock %}">
+            <span class="nav-ico">📜</span> <span class="nav-label">Audit</span>
+          </a>
+          <a href="/policy" class="nav-link {% block nav_policy %}{% endblock %}">
+            <span class="nav-ico">🛡️</span> <span class="nav-label">Policy</span>
+          </a>
+        </nav>
+      </div>
+
+      <div class="sidebar-bottom">
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">
+          <span class="theme-ico theme-ico-light">☀️</span>
+          <span class="theme-ico theme-ico-dark">🌙</span>
+          <span class="theme-label">Theme</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
   <script src="/static/app.js" defer></script>
 </body>
 </html>

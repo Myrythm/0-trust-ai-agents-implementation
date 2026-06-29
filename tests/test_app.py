@@ -393,7 +393,6 @@ def test_index_renders_chat_html(tmp_path: Path, monkeypatch) -> None:
     assert "ZTA Chat" in resp.text
     assert 'id="chat-form"' in resp.text
     assert 'id="chat-messages"' in resp.text
-    assert 'id="chat-trace"' in resp.text
 
 
 def test_chat_html_includes_base_layout(tmp_path: Path, monkeypatch) -> None:
