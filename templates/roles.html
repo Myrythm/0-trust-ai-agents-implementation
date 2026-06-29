@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Roles · ZTA{% endblock %}
+{% block nav_roles %}active{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="page-head">
+    <h1>Roles</h1>
+    <p class="page-sub">Who can do what. Edit <code>roles.yaml</code> to change these; <code>*</code> means all tables.</p>
+  </header>
+  <div class="table-card">
+    <table class="audit-table">
+      <thead><tr><th>Role</th><th>Pages</th><th>Tools</th><th>Readable tables</th></tr></thead>
+      <tbody>
+        {% for row in matrix %}
+        <tr>
+          <td><span class="badge badge-allow">{{ row.role }}</span></td>
+          <td>{% for p in row.pages %}<code>{{ p }}</code> {% endfor %}</td>
+          <td>{% for t in row.tools %}<code>{{ t }}</code> {% endfor %}</td>
+          <td>{% for t in row.tables %}<code>{{ t }}</code> {% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

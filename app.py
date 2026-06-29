@@ -35,7 +35,7 @@ from starlette.responses import Response
 from zta.agent_graph import build_zta_graph
 from zta.audit import Audit
 from zta.errors import RbacError
-from zta.rbac import KNOWN_PAGES, Permissions
+from zta.rbac import KNOWN_PAGES, Permissions, Role
 from zta.runtime import session
 from zta.users import UserStore
 from zta.webauth import sign_session, verify_session
@@ -441,6 +441,65 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 "default": parsed.get("default", "deny"),
                 **base_ctx(user),
             },
+        )
+
+    # ---------- admin: users & roles ----------
+
+    @app.get("/users", response_class=HTMLResponse)
+    async def users_page(request: Request) -> Response:
+        user = _current_user(request, cfg)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        if not perms.page_allowed(user["role"], "users"):
+            return HTMLResponse("403 Forbidden", status_code=403)
+        return templates.TemplateResponse(
+            request,
+            "users.html",
+            {
+                "users": users.list_users(),
+                "roles": [r.value for r in Role],
+                **base_ctx(user),
+            },
+        )
+
+    @app.post("/users")
+    async def users_create(request: Request) -> Response:
+        user = _current_user(request, cfg)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        if not perms.page_allowed(user["role"], "users"):
+            return HTMLResponse("403 Forbidden", status_code=403)
+        form = await request.form()
+        username = str(form.get("username", "")).strip()
+        password = str(form.get("password", ""))
+        role = str(form.get("role", ""))
+        valid = bool(username) and bool(password) and role in {r.value for r in Role}
+        if valid and users.get_user(username) is None:
+            users.create_user(username, password, role)
+        return RedirectResponse("/users", status_code=303)
+
+    @app.post("/users/delete")
+    async def users_delete(request: Request) -> Response:
+        user = _current_user(request, cfg)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        if not perms.page_allowed(user["role"], "users"):
+            return HTMLResponse("403 Forbidden", status_code=403)
+        form = await request.form()
+        target = str(form.get("username", ""))
+        if target and target != user["username"]:  # cannot delete yourself
+            users.delete_user(target)
+        return RedirectResponse("/users", status_code=303)
+
+    @app.get("/roles", response_class=HTMLResponse)
+    async def roles_page(request: Request) -> Response:
+        user = _current_user(request, cfg)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        if not perms.page_allowed(user["role"], "roles"):
+            return HTMLResponse("403 Forbidden", status_code=403)
+        return templates.TemplateResponse(
+            request, "roles.html", {"matrix": perms.as_table(), **base_ctx(user)}
         )
 
     return app

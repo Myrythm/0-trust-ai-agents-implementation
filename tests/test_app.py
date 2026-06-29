@@ -723,3 +723,42 @@ def test_db_query_manager_reads_any_table(tmp_path: Path, monkeypatch) -> None:
     tool = _make_db_query(None, "manager")  # None scope = all tables
     rows = tool.invoke({"sql": "SELECT Name FROM Employee"})
     assert rows == [{"Name": "Jane"}]
+
+
+# ---------- Admin pages: /users and /roles (Task 8) ----------
+
+
+def test_users_page_admin_only(tmp_path: Path) -> None:
+    client = client_as(make_config(tmp_path), role="catalog")
+    assert client.get("/users", follow_redirects=False).status_code == 403
+
+
+def test_admin_can_create_and_delete_user(tmp_path: Path) -> None:
+    client = client_as(make_config(tmp_path), role="manager")
+    resp = client.post(
+        "/users",
+        data={"username": "newbie", "password": "pw", "role": "sales"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "newbie" in client.get("/users").text
+    client.post("/users/delete", data={"username": "newbie"}, follow_redirects=False)
+    assert "newbie" not in client.get("/users").text
+
+
+def test_admin_cannot_delete_self(tmp_path: Path) -> None:
+    client = client_as(make_config(tmp_path), role="manager")
+    client.post("/users/delete", data={"username": "manager"}, follow_redirects=False)
+    assert "manager" in client.get("/users").text
+
+
+def test_roles_page_shows_matrix(tmp_path: Path) -> None:
+    client = client_as(make_config(tmp_path), role="manager")
+    body = client.get("/roles").text
+    assert "sales" in body
+    assert "db_query" in body
+
+
+def test_roles_page_forbidden_for_sales(tmp_path: Path) -> None:
+    client = client_as(make_config(tmp_path), role="sales")
+    assert client.get("/roles", follow_redirects=False).status_code == 403

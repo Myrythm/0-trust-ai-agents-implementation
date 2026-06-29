@@ -50,6 +50,16 @@
             <span class="nav-ico">🛡️</span> <span class="nav-label">Policy</span>
           </a>
           {% endif %}
+          {% if 'users' in allowed_pages %}
+          <a href="/users" class="nav-link {% block nav_users %}{% endblock %}">
+            <span class="nav-ico">👥</span> <span class="nav-label">Users</span>
+          </a>
+          {% endif %}
+          {% if 'roles' in allowed_pages %}
+          <a href="/roles" class="nav-link {% block nav_roles %}{% endblock %}">
+            <span class="nav-ico">🗂️</span> <span class="nav-label">Roles</span>
+          </a>
+          {% endif %}
         </nav>
         {% endif %}
       </div>
