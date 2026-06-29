@@ -24,6 +24,7 @@ from langchain_core.tools import BaseTool
 from zta.audit import Audit
 from zta.identity import Identity
 from zta.policy import Decision, Policy
+from zta.rbac import Permissions
 from zta.tools import ToolRegistry
 
 _log = logging.getLogger(__name__)
@@ -61,13 +62,26 @@ class Agent:
     audit: Audit
     identity: Identity
     registry: ToolRegistry
+    user: str = ""
+    role: str = ""
+    permissions: Permissions | None = None
     trace: list[TraceEntry] = field(default_factory=list)
 
     def tool(self, name: str, **args: Any) -> ToolResult:
         request_id = uuid.uuid4().hex
+        ts = datetime.now(UTC).isoformat()
+
+        # Layer 1 (RBAC): is this role allowed to use this tool at all?
+        # Skipped when no permissions matrix is configured (library default).
+        if self.permissions is not None and not self.permissions.tool_allowed(self.role, name):
+            reason = f"rbac: role {self.role!r} not permitted to use {name!r}"
+            return self._record_deny(
+                request_id=request_id, ts=ts, name=name, args=args, reason=reason
+            )
+
+        # Layer 2 (policy): is this specific call safe?
         decision = self.policy.decide(agent_id=self.agent_id, tool=name, args=args)
         reason = self.policy.reason()
-        ts = datetime.now(UTC).isoformat()
 
         if decision is Decision.DENY:
             return self._record_deny(
@@ -112,6 +126,7 @@ class Agent:
             resource=f"tool:{name}",
             decision="allow",
             reason=reason,
+            user=self.user,
         )
         entry = TraceEntry(
             ts=ts,
@@ -142,6 +157,7 @@ class Agent:
             resource=f"tool:{name}",
             decision="deny",
             reason=reason,
+            user=self.user,
         )
         entry = TraceEntry(
             ts=ts,
@@ -172,6 +188,7 @@ class Agent:
             resource=f"tool:{name}",
             decision="pending_approval",
             reason=reason,
+            user=self.user,
         )
         entry = TraceEntry(
             ts=ts,
@@ -202,6 +219,7 @@ class Agent:
             resource=f"tool:{name}",
             decision="error",
             reason=error_msg,
+            user=self.user,
         )
         entry = TraceEntry(
             ts=ts,
@@ -224,8 +242,15 @@ def session(
     policy: Path,
     audit: Path,
     key_dir: Path,
+    user: str = "",
+    role: str = "",
+    permissions: Permissions | None = None,
 ) -> Iterator[Agent]:
-    """Yield an `Agent` bound to the given identity/policy/audit/key_dir."""
+    """Yield an `Agent` bound to the given identity/policy/audit/key_dir.
+
+    `user`/`role`/`permissions` enable the Layer-1 RBAC check and user-attributed
+    audit; when `permissions` is None the RBAC layer is skipped (policy still runs).
+    """
     identity = Identity.load_or_create(agent, key_dir)
     loaded_policy = Policy.load(policy)
     audit_log = Audit(audit)
@@ -235,4 +260,7 @@ def session(
         audit=audit_log,
         identity=identity,
         registry=ToolRegistry(),
+        user=user,
+        role=role,
+        permissions=permissions,
     )
