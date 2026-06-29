@@ -56,7 +56,7 @@ The chat runtime is built on a LangGraph `StateGraph` that streams the model's r
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 
-# 2. Seed the demo database (5 customers, 10 orders)
+# 2. Seed the demo database (downloads the Chinook media-store dataset, MIT)
 python examples/seed_db.py
 
 # 3. Configure
@@ -77,8 +77,8 @@ Then open **http://localhost:8000**.
 
 | Step | Do this | What happens |
 |------|---------|--------------|
-| 1️⃣ | Chat: **`show all customers`** | The reply streams in token by token. The model calls `db_query("SELECT * FROM customers")`; the policy engine **allows** it, an inline trace card appears, and the agent summarizes the result. |
-| 2️⃣ | Chat: **`delete all customers`** | The model calls `db_write("DELETE FROM customers")`; the policy engine **denies** it, a deny card appears, and the agent explains the action isn't permitted. |
+| 1️⃣ | Chat: **`which genres have the most tracks?`** | The reply streams in token by token. The model calls `db_query("SELECT ... FROM Track JOIN Genre ...")`; the policy engine **allows** it (SELECT), an inline trace card appears, and the agent summarizes the result. |
+| 2️⃣ | Chat: **`delete invoice 1`** | The model calls `db_write("DELETE FROM Invoice ...")`; the policy engine **denies** it, a deny card appears, and the agent explains the action isn't permitted. |
 | 3️⃣ | Visit **`/audit`** | Review every allow/deny decision in the append-only log. The page polls `/api/audit` every 3 s and shows chain validity. |
 | 4️⃣ | Visit **`/policy`** | Inspect the rendered rules and the underlying YAML. |
 
@@ -171,7 +171,7 @@ All settings come from environment variables (or a local `.env` loaded by `pytho
 **`POST /chat` request body:**
 
 ```json
-{ "messages": [ { "role": "user", "content": "show all customers" } ] }
+{ "messages": [ { "role": "user", "content": "which genres have the most tracks?" } ] }
 ```
 
 <details>
@@ -277,7 +277,7 @@ rules:
 │   └── agent_graph.py          # LangGraph StateGraph builder
 ├── tests/                      # identity, policy, audit, tools, runtime, agent_graph, app
 ├── examples/
-│   └── seed_db.py              # Creates demo customers + orders tables
+│   └── seed_db.py              # Builds data.db from the Chinook dataset (pinned v1.4.5)
 ├── templates/
 │   ├── base.html               # App shell: sidebar nav + theme toggle
 │   ├── chat.html               # Modern multi-turn chat UI

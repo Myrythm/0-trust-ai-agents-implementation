@@ -12,7 +12,7 @@ Zero Trust AI Agents (`zta`) is a Python library and FastAPI demo that enforces 
 uv venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
 cp .env.example .env                   # fill in ZTA_OPENAI_API_KEY
-python examples/seed_db.py             # create data.db with demo data
+python examples/seed_db.py             # build data.db from the Chinook dataset (downloads pinned SQL)
 ```
 
 ## Common Commands
